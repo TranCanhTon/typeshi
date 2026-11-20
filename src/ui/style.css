@@ -54,7 +54,7 @@
 }
 .dk-hud > div { position: absolute; top: 14px; }
 .dk-hud-score { left: 16px; font-size: 26px; }
-.dk-hud-time { left: 0; right: 0; text-align: center; }
+.dk-hud-wave { left: 0; right: 0; text-align: center; }
 .dk-hud-combo { right: 16px; }
 .dk-hud-combo .x { color: var(--dk-typed); }
 .dk-hud-combo.err { animation: dk-hud-err 0.35s 1; }
@@ -62,7 +62,7 @@
 @keyframes dk-hud-err { 0%, 60% { color: var(--dk-error); transform: translateX(-3px); } 100% { color: var(--dk-gold); } }
 @keyframes dk-hud-up { 0% { transform: scale(1.35); color: #fff; } 100% { transform: scale(1); } }
 
-.dk-screen { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.35); padding: 16px; }
+.dk-screen { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.35); padding: 16px; overflow: auto; }
 .dk-panel {
   min-width: min(420px, 100%); max-width: 520px; box-sizing: border-box; padding: 22px 26px;
   background: rgba(22, 14, 8, 0.92); border: 1px solid var(--dk-border);
@@ -88,3 +88,27 @@
   background: rgba(0, 0, 0, 0.72); border: 1px solid #3a2616; color: #d8f0c8;
   font: 13px/1.45 ui-monospace, Consolas, monospace;
 }
+
+/* Big centred "Wave N" banner, shown for the wave intro (length set from config). */
+.dk-hud > .dk-banner {
+  top: 38%; left: 0; right: 0; text-align: center; opacity: 0; pointer-events: none;
+  font-size: 64px; letter-spacing: 6px; color: var(--dk-typed); text-shadow: 4px 4px 0 #000;
+}
+.dk-banner.show { animation: dk-banner var(--dk-banner-ms, 2500ms) linear 1 forwards; }
+@keyframes dk-banner {
+  0% { opacity: 0; transform: scale(0.9); }
+  12% { opacity: 1; transform: scale(1); }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Mode buttons on the title screen, and play again / main menu */
+.dk-modes { display: flex; gap: 12px; justify-content: center; margin: 14px 0 6px; flex-wrap: wrap; }
+.dk-modes button {
+  min-width: 150px; padding: 10px 14px; cursor: pointer;
+  background: rgba(40, 24, 12, 0.95); color: var(--dk-gold); border: 1px solid var(--dk-border);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8); font: 18px/1.2 var(--dk-font); text-shadow: var(--dk-shadow);
+}
+.dk-modes button:hover { border-color: var(--dk-typed); color: #fff; }
+.dk-modes button b { color: var(--dk-typed); margin-right: 6px; }
+.dk-modes button span { display: block; font-size: 12px; color: #b89a70; margin-top: 3px; text-shadow: none; }

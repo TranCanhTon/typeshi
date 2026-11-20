@@ -38,8 +38,23 @@ export function createDebugPanel(look: LookSettings, onChange: () => void, game?
     g.add(game, 'labelDistance', 4, 30, 0.5).name('label distance (m)');
     g.add(game.spacing, 'depth', 0, 6, 0.1).name('spacing front-back (m)');
     g.add(game.spacing, 'side', 0, 2.4, 0.05).name('spacing sideways (m)');
-    g.add(game.adaptive, 'enabled').name('adaptive spawning');
-    g.add(game.adaptive, 'assumedWpm', 10, 200, 1).name('assumed WPM (start)');
+
+    // The wave formula (applies from the next spawn / next wave).
+    const w = gui.addFolder('Waves');
+    const W = game.waves;
+    w.add(W.first, 'size', 1, 30, 1).name('wave 1 zombies');
+    w.add(W.first, 'interval', 0.3, 6, 0.05).name('wave 1 spawn every (s)');
+    w.add(W.first, 'maxAlive', 1, 12, 1).name('wave 1 max alive');
+    w.add(W.ramp, 'sizePerWave', 0, 10, 1).name('+ zombies per wave');
+    w.add(W.ramp, 'intervalFactor', 0.7, 1, 0.01).name('interval x per wave');
+    w.add(W.ramp, 'intervalMin', 0.2, 3, 0.05).name('interval floor (s)');
+    w.add(W.ramp, 'maxAliveEvery', 1, 10, 1).name('+1 max alive every N waves');
+    w.add(W.ramp, 'maxAliveCap', 1, 20, 1).name('max alive cap');
+    w.add(W.ramp, 'speedFactor', 1, 1.2, 0.005).name('speed x per wave');
+    w.add(W.ramp, 'speedMax', 1, 3, 0.05).name('speed cap');
+    w.add(W, 'introTime', 0.5, 6, 0.1).name('banner time (s)');
+    w.add(W, 'breakTime', 0, 10, 0.5).name('break after wave (s)');
+    w.close();
   }
 
   const r = gui.addFolder('Render');

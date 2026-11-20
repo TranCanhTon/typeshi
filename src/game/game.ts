@@ -3,10 +3,23 @@
 
 import type { GameConfig } from '../config';
 import type { WordPicker } from '../words/picker';
-import { buildPath, pathLengthUntilWithin, STREETS, type Street, type StreetLayout } from './layout';
+import { buildPath, STREETS, type Street, type StreetLayout } from './layout';
 import type { Rng } from './rng';
+import { mixWeights, waveParams, type WaveParams } from './waves';
 
 export type ZombieKind = 'walker' | 'hunter';
+/** The enemy types the game can spawn today (the wave mix also names runner and bisk, Part C). */
+export const SPAWNABLE: readonly ZombieKind[] = ['walker', 'hunter'];
+
+/** Waves mode ends after the last wave; endless goes on forever. */
+export type Mode = 'waves' | 'endless';
+/**
+ * Where we are in the current wave:
+ *   intro  - the "Wave N" banner, nothing spawns yet
+ *   active - the wave spawns; it's cleared once all of it is spawned and dead
+ *   break  - the pause after a cleared wave
+ */
+export type WavePhase = 'intro' | 'active' | 'break';
 
 export interface Zombie {
   readonly id: number;
@@ -50,6 +63,9 @@ export type GameEvent =
   | { type: 'kill'; id: number; kind: ZombieKind; points: number }
   | { type: 'typo'; id: number | null; key: string; expected: string | null }
   | { type: 'comboTier'; multiplier: number }
+  | { type: 'waveStart'; wave: number }
+  | { type: 'waveCleared'; wave: number }
+  | { type: 'win'; wave: number }
   | { type: 'gameover'; id: number };
 
 export interface RunStats {
@@ -58,6 +74,7 @@ export interface RunStats {
   kills: number;
   hunterKills: number;
   bestCombo: number;
+  wavesCleared: number;
   /** Every correct key, including the keys that lock on. */
   correctKeys: number;
   /** Every wrong key (locked or not). */
@@ -93,20 +110,25 @@ export class Game {
   score = 0;
   time = 0;
   over = false;
+  /** True once the last wave of waves mode is cleared. */
+  won = false;
+  /** Current wave (1-based) and where we are in it. */
+  wave = 1;
+  phase: WavePhase = 'intro';
+  /** Seconds since the current phase began. */
+  phaseTime = 0;
+  /** Zombies spawned so far in the current wave. */
+  waveSpawned = 0;
   readonly stats: RunStats = {
-    time: 0, score: 0, kills: 0, hunterKills: 0, bestCombo: 0, correctKeys: 0, typos: 0,
+    time: 0, score: 0, kills: 0, hunterKills: 0, bestCombo: 0, wavesCleared: 0, correctKeys: 0, typos: 0,
     typingTime: 0, typingCorrect: 0, typingKeys: 0, wordsTyped: 0, missedWords: [],
   };
   private events: GameEvent[] = [];
   private nextId = 1;
-  private spawnTimer = 1.0;
-  private lastSpawnAt = -Infinity;
+  private spawnTimer = 0;
   /** Timestamp (s) of the key that locked on to the current word, if any. */
   private lockStart: number | null = null;
   private lastKeyAt = 0;
-  /** Running mean length of normal words spawned (for the adaptive spawner). */
-  private avgWordLen = 4.5;
-  private normalSpawned = 0;
 
   /**
    * @param layout   the street layout (main sets a new one when the layout sliders change;
@@ -120,7 +142,10 @@ export class Game {
     private lists: WordLists,
     public layout: StreetLayout,
     private weights: Record<Street, number>,
-  ) {}
+    readonly mode: Mode = 'endless',
+  ) {
+    this.events.push({ type: 'waveStart', wave: this.wave });
+  }
 
   // -------------------------------------------------------------------------
   // Queries
@@ -275,99 +300,79 @@ export class Game {
   update(dt: number): void {
     if (this.over) return;
     this.time += dt;
-    this.updateSpawning(dt);
+    this.updateWave(dt);
     this.moveZombies(dt);
     this.stats.time = this.time;
     this.stats.score = this.score;
   }
 
-  /** Difficulty ramp shared by spawning and movement. */
+  // --- Waves ----------------------------------------------------------------
+  // The wave formula (game/waves.ts) is the only spawn source: how many come,
+  // how often, how many at once, how fast and which types.
+
+  /** Numbers for the current wave. */
+  get params(): WaveParams {
+    return waveParams(this.cfg.waves, this.wave);
+  }
+
+  /** Walk speed multiplier for zombies spawned now. */
   get speedMultiplier(): number {
-    const e = this.cfg.endless;
-    return 1 + (e.speedMax - 1) * Math.min(1, this.time / e.speedRampTime);
+    return this.params.speed;
   }
 
   get spawnInterval(): number {
-    const e = this.cfg.endless;
-    return e.intervalMin + (e.intervalStart - e.intervalMin) * Math.exp(-this.time / e.intervalDecay);
+    return this.params.interval;
   }
 
   get maxAlive(): number {
-    const e = this.cfg.endless;
-    return Math.min(e.maxAliveEnd, e.maxAliveStart + Math.floor(this.time / e.maxAliveGrowth));
+    return this.params.maxAlive;
   }
 
-  // --- Adaptive spawning ------------------------------------------------------
-  // The timed spawner alone tops out around 0.4 words/s early on, far below what
-  // a fast typist needs (100 WPM is about 1.4 short words/s). With adaptive on,
-  // the spawner also keeps enough zombies coming that you're never left waiting:
-  // it estimates your word rate from your Typing WPM and keeps that many words
-  // in the pipeline (spawned but not yet locked), counting the walk-in time from
-  // the passage to the label distance. It only tops the field up as you clear
-  // it, so a slower typist is never flooded; the timed ramp still adds pressure.
-
-  /** Estimated typing speed: a prior that quickly gives way to your measured Typing WPM. */
-  get estimatedWpm(): number {
-    const a = this.cfg.adaptive;
-    const n = this.stats.wordsTyped;
-    return (a.assumedWpm * a.priorWords + this.typingWpm() * n) / (a.priorWords + n);
+  /** Zombies of the current wave still to spawn. */
+  get waveLeftToSpawn(): number {
+    return Math.max(0, this.params.size - this.waveSpawned);
   }
 
-  /** Words per second you can clear: typing the word plus switching to the next one. */
-  get demandWordsPerSec(): number {
-    const charsPerSec = (this.estimatedWpm * 5) / 60;
-    const wordTime = Math.max(1, this.avgWordLen - 1) / Math.max(0.5, charsPerSec) + this.cfg.adaptive.switchTime;
-    return 1 / wordTime;
+  private setPhase(phase: WavePhase): void {
+    this.phase = phase;
+    this.phaseTime = 0;
   }
 
-  /** Seconds from spawning to getting a label, averaged over the streets by spawn weight. */
-  get pipelineSeconds(): number {
-    const S = this.cfg.streets;
-    const L = this.layout;
-    let total = 0;
-    let wsum = 0;
-    for (const street of STREETS) {
-      const w = Math.max(0, this.weights[street] ?? 0);
-      if (w === 0) continue;
-      const [d0, d1] = street === 'straight' ? S.spawnDepthStraight : S.spawnDepthSide;
-      const { start, waypoints } = buildPath(L, {
-        street,
-        depth: (d0 + d1) / 2,
-        lateral: street === 'straight' ? 0 : L.crossZ,
-        laneX: 0,
-        endZ: this.cfg.killZ + 0.5,
-        turnPoints: S.turnPoints,
-      });
-      total += w * pathLengthUntilWithin(start, waypoints, this.cfg.playerZ, this.cfg.labelDistance);
-      wsum += w;
+  private updateWave(dt: number): void {
+    const W = this.cfg.waves;
+    this.phaseTime += dt;
+    if (this.phase === 'intro') {
+      if (this.phaseTime >= W.introTime) {
+        this.setPhase('active');
+        this.spawnTimer = 0; // first zombie right after the banner
+      }
+    } else if (this.phase === 'active') {
+      const P = this.params;
+      if (this.waveSpawned < P.size) {
+        this.spawnTimer -= dt;
+        // If no lane has room or no word has a free first letter, the spawn just waits.
+        if (this.spawnTimer <= 0 && this.zombies.length < P.maxAlive && this.trySpawn()) {
+          this.waveSpawned++;
+          this.spawnTimer = P.interval;
+        }
+      } else if (this.zombies.length === 0) {
+        this.stats.wavesCleared++;
+        this.events.push({ type: 'waveCleared', wave: this.wave });
+        if (this.mode === 'waves' && this.wave >= W.count) {
+          this.won = true;
+          this.over = true;
+          this.endSpan(this.lastKeyAt);
+          this.events.push({ type: 'win', wave: this.wave });
+          return;
+        }
+        this.setPhase('break');
+      }
+    } else if (this.phaseTime >= W.breakTime) {
+      this.wave++;
+      this.waveSpawned = 0;
+      this.setPhase('intro');
+      this.events.push({ type: 'waveStart', wave: this.wave });
     }
-    const dist = wsum > 0 ? total / wsum : 0;
-    return dist / (this.cfg.walker.speed * this.speedMultiplier);
-  }
-
-  /** How many not-yet-locked zombies the adaptive spawner keeps on the way. */
-  get targetReady(): number {
-    const a = this.cfg.adaptive;
-    return Math.ceil(this.demandWordsPerSec * a.headroom * (this.pipelineSeconds + a.switchTime)) + a.buffer;
-  }
-
-  /** Zombies alive and not locked: what's left for you to type. */
-  get ready(): number {
-    return this.zombies.filter((z) => z.id !== this.lockedId).length;
-  }
-
-  private updateSpawning(dt: number): void {
-    this.spawnTimer -= dt;
-    const a = this.cfg.adaptive;
-    const timed = this.spawnTimer <= 0 && this.zombies.length < this.maxAlive;
-    const demand =
-      a.enabled &&
-      this.ready < this.targetReady &&
-      this.zombies.length < a.maxAlive &&
-      this.time - this.lastSpawnAt >= a.minGap;
-    if (!timed && !demand) return;
-    // If no lane has room or no word has a free first letter, the spawn just waits.
-    if (this.trySpawn() && timed) this.spawnTimer = this.spawnInterval;
   }
 
   /**
@@ -390,7 +395,7 @@ export class Game {
         ? this.picker.pick(this.lists.hard, { usedFirstLetters: used })
         : this.picker.pick(this.lists.normal, {
             usedFirstLetters: used,
-            maxDifficulty: w.difficultyStart + w.difficultyPerSecond * this.time,
+            maxDifficulty: w.difficultyStart + w.difficultyPerWave * (this.wave - 1),
           });
     if (!word) return false;
 
@@ -425,11 +430,6 @@ export class Game {
       labelledAt: 0,
     };
     this.zombies.push(z);
-    this.lastSpawnAt = this.time;
-    if (kind === 'walker') {
-      this.normalSpawned++;
-      this.avgWordLen += (word.length - this.avgWordLen) / Math.min(this.normalSpawned + 2, 50);
-    }
     this.events.push({ type: 'spawn', zombie: z });
     return true;
   }
@@ -502,14 +502,17 @@ export class Game {
     return { street, lateral, laneX };
   }
 
+  /** Pick a type from the wave mix (types that exist yet, hunters capped per wave). */
   private rollKind(): ZombieKind {
-    const h = this.cfg.hunter;
-    if (this.time < h.firstAfter) return 'walker';
-    const alive = this.zombies.filter((z) => z.kind === 'hunter').length;
-    const cap = this.time >= h.lateAfter ? h.maxAliveLate : h.maxAlive;
-    if (alive >= cap) return 'walker';
-    const chance = Math.min(h.chanceMax, h.chanceStart + h.chancePerSecond * (this.time - h.firstAfter));
-    return this.rng.chance(chance) ? 'hunter' : 'walker';
+    const weights = mixWeights(this.cfg.waves, this.wave, SPAWNABLE);
+    const hunters = this.zombies.filter((z) => z.kind === 'hunter').length;
+    if (hunters >= this.params.hunterMax) weights.delete('hunter');
+    let total = 0;
+    for (const w of weights.values()) total += w;
+    if (total <= 0) return 'walker';
+    let r = this.rng.next() * total;
+    for (const [k, w] of weights) if ((r -= w) < 0) return k;
+    return 'walker';
   }
 
   /** In the main alley or the crossing (side streets excluded), with a little slack. */

@@ -288,18 +288,7 @@ export const CONFIG = {
       slowTime: 0.3,
       height: 2.5,
       sizeJitter: 0.05,
-      /** No hunters before this many seconds into a run. */
-      firstAfter: 25,
-      /** Chance that a spawn is a hunter: starts here... */
-      chanceStart: 0.06,
-      /** ...grows by this per second... */
-      chancePerSecond: 0.001,
-      /** ...up to this. */
-      chanceMax: 0.25,
-      /** Hunters on screen at once, early and late in a run. */
-      maxAlive: 1,
-      maxAliveLate: 2,
-      lateAfter: 120,
+      /** When hunters appear and how often is in `waves.mix`. */
       /** Lurch animation: steps per second at base speed, sway (rad), bob (m). */
       stepRate: 1.4,
       sway: 0.09,
@@ -308,53 +297,60 @@ export const CONFIG = {
     },
 
     /**
-     * Adaptive spawning (on by default, like the spec's adaptive difficulty toggle):
-     * keeps enough words coming for your measured typing speed, so a fast typist
-     * is never left waiting. See Game.updateSpawning.
+     * Waves (both modes). Zombies only ever come in waves: a "Wave N" banner,
+     * then the wave spawns; once everything in it is dead there's a break, then
+     * the next banner. Waves mode ends after `count` waves with the win screen;
+     * endless keeps going on the same formula. The wave formula is the only
+     * thing that decides how many zombies come and how fast.
      */
-    adaptive: {
-      enabled: true,
+    waves: {
+      /** Waves in waves mode. */
+      count: 20,
+      /** How long the "Wave N" banner shows before spawning starts (s). */
+      introTime: 2.5,
+      /** Break after a wave is cleared (s). */
+      breakTime: 3,
+      /** Wave 1. */
+      first: {
+        size: 5,
+        /** Seconds between spawns. */
+        interval: 2.5,
+        maxAlive: 3,
+      },
+      /** How each wave ramps from the one before. */
+      ramp: {
+        sizePerWave: 2,
+        intervalFactor: 0.93,
+        intervalMin: 0.8,
+        /** Max alive goes up by 1 every this many waves... */
+        maxAliveEvery: 2,
+        /** ...up to this. */
+        maxAliveCap: 8,
+        /** Walk speed x this per wave... */
+        speedFactor: 1.04,
+        /** ...up to this. */
+        speedMax: 1.8,
+      },
       /**
-       * Typing WPM assumed before you've typed anything. Kept at about what the
-       * timed spawner gives anyway, so a beginner isn't flooded at the start...
+       * Enemy mix: each type appears from wave `from` and is picked by weight
+       * against the others available. Runner and Bisk arrive with Part C; until
+       * then their spawns go to the types that exist.
        */
-      assumedWpm: 25,
-      /** ...weighted like this many words, so your real speed takes over within a few words. */
-      priorWords: 2,
-      /** Seconds to read and switch to the next word after a kill. */
-      switchTime: 0.35,
-      /** Supply this much more than your measured rate (covers waits at the crossing). */
-      headroom: 1.4,
-      /** Extra zombies kept on the way on top of that. */
-      buffer: 1,
-      /** Hard cap on zombies alive (first letters must stay unique, so keep it well under 26). */
-      maxAlive: 20,
-      /** Minimum seconds between adaptive spawns. */
-      minGap: 0.2,
-    },
-
-    /** Endless mode: how fast things ramp up. */
-    endless: {
-      /** Seconds between spawns at the start... */
-      intervalStart: 2.4,
-      /** ...shrinking toward this... */
-      intervalMin: 0.75,
-      /** ...with this time constant (s). */
-      intervalDecay: 100,
-      /** Max zombies on screen at the start, the cap, and seconds per extra one. */
-      maxAliveStart: 4,
-      maxAliveEnd: 12,
-      maxAliveGrowth: 20,
-      /** Walk speed multiplier grows linearly to speedMax over this many seconds. */
-      speedRampTime: 240,
-      speedMax: 2.0,
+      mix: {
+        walker: { from: 1, weight: 10 },
+        runner: { from: 3, weight: 4 },
+        bisk: { from: 4, weight: 1.6 },
+        hunter: { from: 6, weight: 1.2 },
+      },
+      /** Hunters alive at once: `base`, and `late` from wave `lateFrom`. */
+      hunterMax: { base: 1, late: 2, lateFrom: 13 },
     },
 
     words: {
-      /** Normal zombies prefer words at or below this difficulty at the start... */
+      /** Normal zombies prefer words at or below this difficulty in wave 1... */
       difficultyStart: 4.5,
-      /** ...rising by this per second. */
-      difficultyPerSecond: 0.025,
+      /** ...rising by this every wave. */
+      difficultyPerWave: 0.5,
       /** Don't repeat a word within this many picks. */
       recentMemory: 25,
     },

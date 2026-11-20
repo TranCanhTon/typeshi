@@ -4,7 +4,7 @@ The full spec is in GAME_SPEC.md. Read it before doing anything, and follow sect
 
 Current work: **Version 2, parts A to F** (Ton's v2 brief), built in order on branch `feat/v2`. After each part: commit (conventional commits, no co-author line), update this file, tell Ton how to test, and stop until he says go.
 
-Done: **Part A** (Free Zombies walkers).
+Done: **Part A** (Free Zombies walkers), **Part B** (waves).
 
 ## Decisions Ton has made so far
 
@@ -17,7 +17,12 @@ Done: **Part A** (Free Zombies walkers).
 - The Blind Hunter has no rig, so it uses a **procedural lurch** (sway, bob, lean; shudder and knock back on hit; topples backward on death) until Ton rigs it. Its license is CC BY-NC (non commercial).
 - Labels and HUD use **Gamestation Text** (SIL OFL, `public/assets/fonts/GamestationText.otf`), supplied by Ton in place of AnalogMono.
 - Labels appear (no blur stage) at `game.labelDistance`; only labelled zombies are targetable.
-- **Typing WPM** (main number) counts only time inside words, lock key to last key, and does not count the lock key as a character. **Run WPM** is over the whole run. Adaptive spawning (`game.adaptive`) keeps fast typists fed.
+- **Typing WPM** (main number) counts only time inside words, lock key to last key, and does not count the lock key as a character. **Run WPM** is over the whole run.
+
+- **Waves everywhere (Part B).** Zombies only come in waves, in both modes: "Wave N" banner (, 2.5 s), the wave spawns, it's cleared when all of it is spawned and dead, then a break (, 3 s). **Waves mode** = 20 waves then the win screen; **Endless** = the same formula forever. The title screen picks the mode (1/Enter = Waves, 2 = Endless); results have Play again (Enter) and Main menu (M).
+  - The wave formula (, ) is the **only spawn source**. Ton removed the adaptive spawner () because it spawned far too many zombies, and the time-based  ramp. Wave 1: 5 zombies, one every 2.5 s, max 3 alive; each wave +2 zombies, interval x0.93 (floor 0.8 s), max alive +1 every 2 waves (cap 8), walk speed x1.04 (cap x1.8); word difficulty rises per wave ().
+  - Enemy mix is data (): walkers from wave 1, runners from 3, Bisk from 4, Blind Hunter from 6, Bisk a bit more common than the Hunter. Max 1 Hunter alive, 2 from wave 13. Runner and Bisk don't exist until Part C, so for now only walkers and hunters spawn ( in game.ts).
+  - Unique first letters and the street/lane spacing are unchanged. HUD top centre shows "Wave N" ("Wave N / 20" in waves mode). F2 readout shows the wave state.
 
 ## v2 decisions for later parts (answered before Part A)
 

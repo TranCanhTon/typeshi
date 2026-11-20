@@ -2,7 +2,7 @@
 
 import { AmbientLight, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 import { CONFIG, currentLayout } from './config';
-import { Game } from './game/game';
+import { Game, type Mode } from './game/game';
 import { createRng } from './game/rng';
 import { buildAlley } from './render/alley';
 import { Dust } from './render/dust';
@@ -111,6 +111,8 @@ type Phase = 'loading' | 'title' | 'playing' | 'over';
 let phase: Phase = 'loading';
 let game: Game | null = null;
 let zombies: ZombieRenderer | null = null;
+/** The mode of the last run, for "play again". */
+let lastMode: Mode = 'waves';
 
 function readBest(): number {
   try {
@@ -128,8 +130,9 @@ function saveBest(score: number): void {
   }
 }
 
-function startRun(): void {
-  // Each endless run gets its own seed; everything random in the run flows from it.
+function startRun(mode: Mode): void {
+  lastMode = mode;
+  // Each run gets its own seed; everything random in the run flows from it.
   const runRng = createRng((Date.now() ^ 0x9e3779b9) >>> 0);
   game = new Game(
     CONFIG.game,
@@ -138,21 +141,46 @@ function startRun(): void {
     { normal: ENGLISH_200, hard: HARD_WORDS },
     layout,
     CONFIG.layout.spawnWeights,
+    mode,
   );
+  acc = 0;
   zombies?.clear();
   labels.clear();
   screens.hide();
+  hud.clearBanner();
   hud.show(true);
   phase = 'playing';
 }
 
+/** Death or the win: show the results. */
 function endRun(g: Game): void {
   const best = readBest();
   saveBest(g.score);
   labels.clear();
-  screens.gameOver(g, best);
+  hud.clearBanner();
+  screens.results(g, best);
   phase = 'over';
 }
+
+function toMenu(): void {
+  game = null;
+  zombies?.clear();
+  labels.clear();
+  hud.clearBanner();
+  hud.show(false);
+  screens.title();
+  phase = 'title';
+}
+
+screens.onPickMode = (mode) => {
+  if (phase === 'title') startRun(mode);
+};
+screens.onRetry = () => {
+  if (phase === 'over') startRun(lastMode);
+};
+screens.onMenu = () => {
+  if (phase === 'over') toMenu();
+};
 
 window.addEventListener('keydown', (e) => {
   // let the debug panel's number fields have their keys
@@ -170,8 +198,18 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (e.key === 'Enter' && (phase === 'title' || phase === 'over')) {
-    startRun();
+  if (phase === 'title' && (e.key === 'Enter' || e.key === '1' || e.key === '2')) {
+    startRun(e.key === '2' ? 'endless' : 'waves');
+    e.preventDefault();
+    return;
+  }
+  if (phase === 'over' && e.key === 'Enter') {
+    startRun(lastMode);
+    e.preventDefault();
+    return;
+  }
+  if (phase === 'over' && (e.key === 'm' || e.key === 'M')) {
+    toMenu();
     e.preventDefault();
     return;
   }
@@ -237,7 +275,7 @@ function tick(dt: number): void {
       zombies?.onEvent(e);
       labels.onEvent(e);
       hud.onEvent(e);
-      if (e.type === 'gameover') endRun(game);
+      if (e.type === 'gameover' || e.type === 'win') endRun(game);
     }
     hud.update(game);
     readout.update(game, performance.now() / 1000);
