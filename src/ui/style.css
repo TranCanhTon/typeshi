@@ -112,3 +112,19 @@
 .dk-modes button:hover { border-color: var(--dk-typed); color: #fff; }
 .dk-modes button b { color: var(--dk-typed); margin-right: 6px; }
 .dk-modes button span { display: block; font-size: 12px; color: #b89a70; margin-top: 3px; text-shadow: none; }
+
+/* Part D: which word is which zombie */
+.dk-stem {
+  position: absolute; left: 0; top: 0; width: 1px; background: var(--dk-stem);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.55); transform-origin: 50% 0; pointer-events: none;
+}
+.dk-stem.locked { background: var(--dk-typed); box-shadow: 1px 0 0 rgba(0, 0, 0, 0.7); }
+/* type markers: walkers have none */
+.dk-label.k-runner::before, .dk-label.k-bisk::before, .dk-label.k-blob::before, .dk-label.k-hunter::before {
+  content: ''; display: inline-block; width: var(--dk-marker-size); height: var(--dk-marker-size);
+  margin-right: 6px; vertical-align: 2px; box-shadow: 2px 2px 0 #000;
+}
+.dk-label.k-runner::before { background: var(--dk-mark-runner); }
+.dk-label.k-bisk::before { background: var(--dk-mark-bisk); }
+.dk-label.k-blob::before { background: var(--dk-mark-blob); border-radius: 50%; }
+.dk-label.k-hunter::before { background: var(--dk-mark-hunter); }

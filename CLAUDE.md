@@ -4,7 +4,7 @@ The full spec is in GAME_SPEC.md. Read it before doing anything, and follow sect
 
 Current work: **Version 2, parts A to F** (Ton's v2 brief), built in order on branch `feat/v2`. After each part: commit (conventional commits, no co-author line), update this file, tell Ton how to test, and stop until he says go.
 
-Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs).
+Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs), **Part D** (which word is which zombie).
 
 ## Decisions Ton has made so far
 
@@ -29,6 +29,11 @@ Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner,
   - **Bisk** = `bisk_lod.glb`, built from Rahi_IV's `bisk.glb` by `npm run simplify:bisk` (113,740 -> ~5,500 tris). **Toned down at Ton's request**: chest flattened, the exposed chest covered with the jacket's black material, the chest ring removed. Shuffles to `bisk.stopDistance` (11 m) down the main alley and stays. ~2 s after its word appears it lunges (scale + lean) and spits a glowing green blob, then again every ~4.5 s while alive (one blob in flight at a time). Max 1 Bisk alive.
   - **Blob**: its own 3-4 letter word, unique first letter, labelled at once; reaches you in 1.5 s. Typed = broken. Hit = **blinded** for 2 s (heavy blur, dim, green tint on the world; blur and fade on the labels, still readable), fading back over the last 0.5 s. Typing still works. Blobs don't count toward max alive or the kill line, but a wave isn't cleared while one is in flight.
   - The "fiona - super star kartz" file Ton sent is **not used** (Shrek/DreamWorks character ripped from a licensed game).
+
+- **Which word is which zombie (Part D).** Labels keep their fixed font size (on purpose, so they don't jump). On top of the stacking:
+  - **Every label has a stem** from its bottom centre to its own zombie's head (the dog's head is at the front of its body), angled when stacked. This brings back the line Ton removed in v1, now on every label (`labels.stemWidth`, `labels.stemColor`).
+  - **The locked zombie gets an outline** in the lock colour (`labels.lockColor`, same as the locked label), an inverted-hull shell `labels.lockOutline` m thick, built the first time it's locked.
+  - **Type markers** before the word: none for walkers, yellow square = runner, green square = Bisk, green dot = blob, red square = Hunter (`labels.markers`).
 
 ## v2 decisions for later parts (answered before Part A)
 

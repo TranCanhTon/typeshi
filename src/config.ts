@@ -167,6 +167,22 @@ export const CONFIG = {
     gap: 3,
     /** Extra sideways margin a pushed label keeps, so it doesn't flick in and out of the stack (px). */
     stackHysteresis: 12,
+    /** Colour of the locked label's border, typed letters, its stem, and the outline on its zombie. */
+    lockColor: '#ff9a3c',
+    /** Outline thickness on the locked zombie (m). */
+    lockOutline: 0.035,
+    /** Every label has a stem down to its own zombie's head (px wide, colour). */
+    stemWidth: 1,
+    stemColor: 'rgba(241, 228, 200, 0.55)',
+    /** Small type marker before the word. Walkers have none. */
+    markers: {
+      runner: '#ffd23a',
+      bisk: '#5cff3a',
+      blob: '#5cff3a',
+      hunter: '#ff3a2e',
+    },
+    /** Marker size (px). */
+    markerSize: 8,
   },
 
   // ---------------------------------------------------------------------------

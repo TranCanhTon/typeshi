@@ -15,10 +15,17 @@
 //    doesn't flick in and out of the stack as zombies drift sideways.
 //  * Smoothing: labels slide toward their spot instead of snapping there.
 //  * Whole pixels only: positions are rounded so text stays crisp.
+//
+// Which word is which zombie:
+//  * Every label has a thin stem from its bottom centre to its own zombie's
+//    head, angled if needed, so it points at the right body even when stacked.
+//  * A small type marker before the word: none for walkers, a colour each for
+//    runner, Bisk and its blob, and the Hunter (CONFIG.labels.markers).
+//  * (The locked zombie also gets an outline in the lock colour: render/zombies.ts.)
 
 import { type Camera, Vector3 } from 'three';
 import { CONFIG } from '../config';
-import type { Game, GameEvent } from '../game/game';
+import type { Game, GameEvent, ZombieKind } from '../game/game';
 
 const TYPO_FLASH_MS = 280;
 const L = CONFIG.labels;
@@ -26,6 +33,7 @@ const L = CONFIG.labels;
 interface Label {
   id: number;
   el: HTMLDivElement;
+  stem: HTMLDivElement;
   letters: HTMLSpanElement[];
   typed: number;
   locked: boolean;
@@ -43,6 +51,9 @@ interface Placement {
   /** Screen point just above the zombie's head, where the label's bottom centre sits. */
   ax: number;
   ay: number;
+  /** Screen point of the zombie's head, where the stem ends. */
+  hx: number;
+  hy: number;
   dist: number;
 }
 
@@ -53,13 +64,19 @@ export class WordLabels {
   private order: number[] = [];
   private mismatchTime = 0;
   private v = new Vector3();
+  private h = new Vector3();
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
     this.root.className = 'dk-labels';
-    this.root.style.setProperty('--dk-label-size', `${L.fontSize}px`);
-    this.root.style.setProperty('--dk-pop-scale', String(L.popScale));
-    this.root.style.setProperty('--dk-pop-ms', `${L.popMs}ms`);
+    const css = this.root.style;
+    css.setProperty('--dk-label-size', `${L.fontSize}px`);
+    css.setProperty('--dk-pop-scale', String(L.popScale));
+    css.setProperty('--dk-pop-ms', `${L.popMs}ms`);
+    css.setProperty('--dk-typed', L.lockColor);
+    css.setProperty('--dk-stem', L.stemColor);
+    css.setProperty('--dk-marker-size', `${L.markerSize}px`);
+    for (const [k, c] of Object.entries(L.markers)) css.setProperty(`--dk-mark-${k}`, c);
     parent.appendChild(this.root);
   }
 
@@ -82,6 +99,7 @@ export class WordLabels {
     game: Game,
     camera: Camera,
     anchor: (id: number, out: Vector3) => Vector3 | null,
+    head: (id: number, out: Vector3) => Vector3 | null,
     width: number,
     height: number,
     dt: number,
@@ -92,9 +110,11 @@ export class WordLabels {
       const p = anchor(z.id, this.v);
       if (!p) continue;
       const dist = camera.position.distanceTo(p);
+      const hp = head(z.id, this.h) ?? this.h.copy(p);
       p.project(camera);
+      hp.project(camera);
       if (p.z > 1) continue; // behind the camera
-      const l = this.labels.get(z.id) ?? this.create(z.id, z.word, z.kind === 'hunter');
+      const l = this.labels.get(z.id) ?? this.create(z.id, z.word, z.kind);
 
       if (l.typed !== z.typed) {
         l.letters.forEach((s, i) => s.classList.toggle('t', i < z.typed));
@@ -109,6 +129,8 @@ export class WordLabels {
         l,
         ax: (p.x * 0.5 + 0.5) * width,
         ay: (-p.y * 0.5 + 0.5) * height,
+        hx: (hp.x * 0.5 + 0.5) * width,
+        hy: (-hp.y * 0.5 + 0.5) * height,
         dist,
       });
     }
@@ -206,20 +228,46 @@ export class WordLabels {
       l.el.style.left = `${px}px`;
       l.el.style.top = `${py}px`;
       l.el.style.zIndex = String(l.locked ? 2000 : 1000 - rank);
+      this.placeStem(l, px + Math.round(l.w / 2), py + l.h, it.hx, it.hy, rank);
     });
   }
 
-  private create(id: number, word: string, elite: boolean): Label {
+  /** A thin line from the label's bottom centre (sx, sy) to its zombie's head (hx, hy). */
+  private placeStem(l: Label, sx: number, sy: number, hx: number, hy: number, rank: number): void {
+    const dx = Math.round(hx) - sx;
+    const dy = Math.round(hy) - sy;
+    const len = Math.round(Math.hypot(dx, dy));
+    if (len < 2 || dy <= 0) {
+      l.stem.style.display = 'none';
+      return;
+    }
+    const st = l.stem.style;
+    st.display = '';
+    st.left = `${sx}px`;
+    st.top = `${sy}px`;
+    st.height = `${len}px`;
+    // the stem hangs straight down from its top end, then turns toward the head
+    st.transform = `rotate(${(-Math.atan2(dx, dy) * 180) / Math.PI}deg)`;
+    // under every label, so labels stay readable; the locked one's stem on top
+    st.zIndex = String(l.locked ? 1999 : 100 - Math.min(rank, 99));
+    l.stem.classList.toggle('locked', l.locked);
+  }
+
+  private create(id: number, word: string, kind: ZombieKind): Label {
     const el = document.createElement('div');
-    el.className = elite ? 'dk-label elite' : 'dk-label';
+    el.className = `dk-label k-${kind}${kind === 'hunter' ? ' elite' : ''}`;
     const letters = [...word].map((ch) => {
       const s = document.createElement('span');
       s.textContent = ch;
       el.appendChild(s);
       return s;
     });
-    this.root.append(el);
-    const l: Label = { id, el, letters, typed: 0, locked: false, w: 0, h: 0, x: 0, y: 0, fresh: true, pushed: false };
+    const stem = document.createElement('div');
+    stem.className = 'dk-stem';
+    stem.style.width = `${L.stemWidth}px`;
+    stem.style.display = 'none';
+    this.root.append(stem, el);
+    const l: Label = { id, el, stem, letters, typed: 0, locked: false, w: 0, h: 0, x: 0, y: 0, fresh: true, pushed: false };
     this.measure(l);
     el.classList.add('pop');
     this.labels.set(id, l);
@@ -235,6 +283,7 @@ export class WordLabels {
     const l = this.labels.get(id);
     if (!l) return;
     l.el.remove();
+    l.stem.remove();
     this.labels.delete(id);
   }
 }

@@ -15,6 +15,8 @@
 //    bob, lean), a shudder and knock back on hit, topples backward on death.
 
 import {
+  BackSide,
+  SkinnedMesh,
   AnimationAction,
   AnimationClip,
   AnimationMixer,
@@ -284,6 +286,53 @@ abstract class ZombieView {
     return out.set(this.root.position.x, this.height + 0.25, this.root.position.z);
   }
 
+  /** World position of the head, where the label's stem ends. */
+  headAnchor(out: Vector3): Vector3 {
+    return out.set(this.root.position.x, Math.max(0.2, this.height - 0.05 + this.root.position.y), this.root.position.z);
+  }
+
+  // --- Lock outline -------------------------------------------------------------
+  // The locked zombie gets a bright outline in the lock colour: a copy of each
+  // mesh, pushed out along its normals and drawn back faces only (the classic
+  // inverted hull). Built the first time the zombie is locked.
+  private outlines: Mesh[] = [];
+  private outlined = false;
+
+  setLocked(on: boolean): void {
+    if (on === this.outlined) return;
+    this.outlined = on;
+    if (on && this.outlines.length === 0) this.buildOutline();
+    for (const o of this.outlines) o.visible = on;
+  }
+
+  private buildOutline(): void {
+    const meshes: Mesh[] = [];
+    this.root.traverse((o) => {
+      if ((o as Mesh).isMesh) meshes.push(o as Mesh);
+    });
+    this.root.updateMatrixWorld(true);
+    const ws = new Vector3();
+    for (const m of meshes) {
+      // thickness in the mesh's own units, so it's the same in metres on every model
+      const scale = m.getWorldScale(ws).x || 1;
+      const mat = outlineMaterial(CONFIG.labels.lockOutline / scale);
+      let o: Mesh;
+      if ((m as SkinnedMesh).isSkinnedMesh) {
+        const sm = m as SkinnedMesh;
+        o = new SkinnedMesh(sm.geometry, mat);
+        (o as SkinnedMesh).bind(sm.skeleton, sm.bindMatrix);
+      } else {
+        o = new Mesh(m.geometry, mat);
+      }
+      o.position.copy(m.position);
+      o.quaternion.copy(m.quaternion);
+      o.scale.copy(m.scale);
+      o.frustumCulled = false;
+      m.parent?.add(o);
+      this.outlines.push(o);
+    }
+  }
+
   abstract update(z: Zombie | null, dt: number): void;
   abstract hit(): void;
   /** Bisk only: start the spit lunge. */
@@ -295,6 +344,21 @@ abstract class ZombieView {
 }
 
 const ease = (t: number): number => t * t * (3 - 2 * t);
+
+/** Back-face shell pushed out along the normals by `thickness` (mesh units), in the lock colour. */
+function outlineMaterial(thickness: number): MeshBasicMaterial {
+  const m = ps1ify(new MeshBasicMaterial({ color: CONFIG.labels.lockColor, side: BackSide }));
+  const ps1 = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    ps1.call(m, shader, renderer);
+    shader.uniforms.uOutline = { value: thickness };
+    shader.vertexShader = shader.vertexShader
+      .replace('void main() {', 'uniform float uOutline;\nvoid main() {')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normalize( normal ) * uOutline;');
+  };
+  m.customProgramCacheKey = () => 'dk-ps1-outline';
+  return m;
+}
 
 class RunnerView extends ZombieView {
   private pivot = new Group();
@@ -347,6 +411,16 @@ class RunnerView extends ZombieView {
 
   labelAnchor(out: Vector3): Vector3 {
     return out.set(this.root.position.x, this.height + 0.35, this.root.position.z);
+  }
+
+  /** The dog's head is at the front of its body, not over its middle. */
+  headAnchor(out: Vector3): Vector3 {
+    const reach = this.height * 0.55;
+    return out.set(
+      this.root.position.x + Math.sin(this.heading) * reach,
+      this.height * 0.95 + this.root.position.y,
+      this.root.position.z + Math.cos(this.heading) * reach,
+    );
   }
 }
 
@@ -472,6 +546,10 @@ class BlobView extends ZombieView {
 
   labelAnchor(out: Vector3): Vector3 {
     return out.set(this.root.position.x, this.root.position.y + 0.3, this.root.position.z);
+  }
+
+  headAnchor(out: Vector3): Vector3 {
+    return out.copy(this.root.position);
   }
 }
 
@@ -642,6 +720,7 @@ export class ZombieRenderer {
   update(game: Game, dt: number): void {
     const byId = new Map(game.zombies.map((z) => [z.id, z]));
     for (const [id, v] of this.views) {
+      v.setLocked(id === game.lockedId && !v.dying);
       v.update(byId.get(id) ?? null, dt);
       if (v.dead) {
         this.group.remove(v.root);
@@ -670,6 +749,11 @@ export class ZombieRenderer {
     return v ? v.labelAnchor(out) : null;
   }
 
+  headAnchor(id: number, out: Vector3): Vector3 | null {
+    const v = this.views.get(id);
+    return v ? v.headAnchor(out) : null;
+  }
+
   clear(): void {
     for (const v of this.views.values()) this.group.remove(v.root);
     this.views.clear();
@@ -686,7 +770,9 @@ export class ZombieRenderer {
     });
     const views = (['walker', 'hunter', 'runner', 'bisk', 'blob'] as const).map((k) => this.makeView(fake(k)));
     for (const v of views) this.group.add(v.root);
+    views[0].setLocked(true);
     compile();
+    views[0].setLocked(false);
     for (const v of views) this.group.remove(v.root);
   }
 }

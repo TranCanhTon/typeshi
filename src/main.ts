@@ -290,7 +290,15 @@ function tick(dt: number): void {
   if (game && zombies) {
     zombies.update(game, dt);
     if (phase === 'playing') {
-      labels.update(game, camera, (id, out) => zombies!.labelAnchor(id, out), window.innerWidth, window.innerHeight, dt);
+      labels.update(
+        game,
+        camera,
+        (id, out) => zombies!.labelAnchor(id, out),
+        (id, out) => zombies!.headAnchor(id, out),
+        window.innerWidth,
+        window.innerHeight,
+        dt,
+      );
     }
   }
 
