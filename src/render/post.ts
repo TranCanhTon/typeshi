@@ -17,6 +17,11 @@ const PS1Shader = {
     uRes: { value: new Vector2(480, 270) },
     uDither: { value: 1.0 },
     uLevels: { value: 32.0 },
+    /** Blinded by Bisk's spit: 0 = clear, 1 = full. */
+    uBlind: { value: 0 },
+    uBlindBlur: { value: 5 },
+    uBlindDim: { value: 0.55 },
+    uBlindTint: { value: 0.18 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -30,6 +35,10 @@ const PS1Shader = {
     uniform vec2 uRes;
     uniform float uDither;
     uniform float uLevels;
+    uniform float uBlind;
+    uniform float uBlindBlur;
+    uniform float uBlindDim;
+    uniform float uBlindTint;
     varying vec2 vUv;
 
     float bayer2( vec2 a ) { a = floor( a ); return fract( dot( a, vec2( 0.5, a.y * 0.75 ) ) ); }
@@ -42,7 +51,24 @@ const PS1Shader = {
 
     void main() {
       vec2 px = floor( vUv * uRes );
-      vec3 c = toSRGB( texture2D( tDiffuse, ( px + 0.5 ) / uRes ).rgb );
+      vec3 lin = texture2D( tDiffuse, ( px + 0.5 ) / uRes ).rgb;
+      if ( uBlind > 0.001 ) {
+        // blinded: a heavy blur (two rings of taps), darker, tinted green
+        float r = uBlindBlur * uBlind;
+        vec3 sum = lin;
+        float n = 1.0;
+        for ( int i = 0; i < 12; i++ ) {
+          float a = float( i ) * 0.5236; // 30 degrees
+          float ring = ( mod( float( i ), 2.0 ) == 0.0 ) ? r : r * 0.5;
+          vec2 o = vec2( cos( a ), sin( a ) ) * ring;
+          sum += texture2D( tDiffuse, ( px + 0.5 + o ) / uRes ).rgb;
+          n += 1.0;
+        }
+        lin = sum / n;
+        lin *= 1.0 - uBlindDim * uBlind;
+        lin = mix( lin, lin * vec3( 0.55, 1.25, 0.45 ), uBlindTint * uBlind * 4.0 );
+      }
+      vec3 c = toSRGB( lin );
       float steps = max( uLevels - 1.0, 1.0 );
       float threshold = bayer4( px ) - 0.5;
       c += threshold * uDither / steps;
@@ -78,6 +104,15 @@ export class RetroPost {
     this.height = Math.max(36, Math.round(this.width / aspect));
     this.composer.setSize(this.width, this.height);
     this.pass.uniforms.uRes.value.set(this.width, this.height);
+  }
+
+  /** Blind strength 0..1 and how it looks (from CONFIG.game.bisk.blind). */
+  setBlind(level: number, blur: number, dim: number, tint: number): void {
+    const u = this.pass.uniforms;
+    u.uBlind.value = level;
+    u.uBlindBlur.value = blur;
+    u.uBlindDim.value = dim;
+    u.uBlindTint.value = tint;
   }
 
   setDither(strength: number, levels: number): void {

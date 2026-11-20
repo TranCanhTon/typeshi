@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { CONFIG, currentLayout } from '../config';
 import { ENGLISH_200, HARD_WORDS } from '../words/lists';
 import { WordPicker, wordDifficulty } from '../words/picker';
-import { Game, type GameEvent } from './game';
+import { Game, type GameEvent, type Mode } from './game';
+import { waveParams } from './waves';
 import { buildPath, computeLayout, STREETS, type Street } from './layout';
 import { createRng } from './rng';
 
@@ -81,7 +82,7 @@ describe('spawning', () => {
       for (const z of [...g.zombies]) if (z.z > -3) typeWord(g, z.word.slice(z.typed));
       if (g.over) break;
     }
-    expect(g.stats.kills).toBeGreaterThan(50);
+    expect(g.stats.kills + g.stats.spitsBroken).toBeGreaterThan(50); // words finished (blobs are not kills)
   });
 
   it('the spawn waits when no word with a free first letter exists', () => {
@@ -92,17 +93,10 @@ describe('spawning', () => {
     expect(g.zombies.length).toBe(1);
   });
 
-  it('hunters get hard words and only appear after firstAfter', () => {
+  it('hunters get hard words', () => {
     const g = makeGame();
     expect(g.trySpawn('hunter')).toBe(true);
     expect(HARD_WORDS).toContain(g.zombies[0].word);
-
-    const early = makeGame();
-    for (let t = 0; t < (cfg.hunter.firstAfter - 1) * 60; t++) {
-      early.update(1 / 60);
-      for (const z of [...early.zombies]) typeWord(early, z.word.slice(z.typed));
-    }
-    expect(early.stats.hunterKills).toBe(0);
   });
 
   it('zombies get a label (and become targetable) exactly at labelDistance', () => {
@@ -142,14 +136,12 @@ describe('spacing', () => {
   it('lanes free up once their zombies have walked spacing.depth', () => {
     const g = makeGame();
     (g as unknown as { spawnTimer: number }).spawnTimer = 1e9; // only our own spawns
-    cfg.adaptive.enabled = false;
     while (g.trySpawn('walker'));
     const n = g.zombies.length;
     for (let i = 0; i < 60 * 30 && g.zombies.some((z) => z.travelled < cfg.spacing.depth); i++) {
       for (const z of g.zombies) z.slowTimer = 0;
       g.update(1 / 60);
     }
-    cfg.adaptive.enabled = true;
     expect(g.trySpawn('walker')).toBe(true);
     expect(g.zombies.length).toBe(n + 1);
   });
@@ -211,7 +203,7 @@ describe('typing', () => {
     expect(typo).toMatchObject({ expected: 'u', key: 'x' });
     typeWord(g, 'use');
     expect(g.zombies.length).toBe(0);
-    expect(g.stats.missedWords).toEqual(['house']);
+    expect(g.stats.typoWords).toEqual(['house']);
   });
 
   it('a key matching no zombie is a typo with no target', () => {
@@ -267,14 +259,13 @@ describe('movement and death', () => {
     expect(g.time).toBe(t);
   });
 
-  it('difficulty ramps up over time', () => {
+  it('zombies spawned in later waves walk faster', () => {
     const g = makeGame();
-    const i0 = g.spawnInterval;
-    const s0 = g.speedMultiplier;
-    g.time = 200;
-    expect(g.spawnInterval).toBeLessThan(i0);
-    expect(g.speedMultiplier).toBeGreaterThan(s0);
-    expect(g.maxAlive).toBeGreaterThan(cfg.endless.maxAliveStart);
+    g.trySpawn('walker');
+    g.wave = 8;
+    g.trySpawn('walker');
+    const [a, b] = g.zombies;
+    expect(b.baseSpeed / a.baseSpeed).toBeCloseTo(Math.pow(1.04, 7), 6);
   });
 });
 
@@ -314,6 +305,22 @@ describe('wpm', () => {
     expect(g.runWpm).toBeCloseTo(10 / 5 / 0.5, 6); // 10 correct chars over 30 s
   });
 
+  it('a pause in the middle of a word does not count as typing time', () => {
+    const g = makeGame(['house'], ['abandoned']);
+    spawnEmerged(g);
+    const z = g.zombies[0];
+    g.key('h', 10); // lock: the word's clock starts
+    g.key('o', 10.12);
+    g.shiftKeyClock(60); // paused for a minute, then resumed
+    let t = 70.24;
+    for (const ch of z.word.slice(2)) {
+      g.key(ch, t);
+      t += 0.12;
+    }
+    expect(g.stats.typingTime).toBeCloseTo(0.48, 6); // 4 gaps x 0.12 s, the minute left out
+    expect(g.typingWpm()).toBeCloseTo(100, 5);
+  });
+
   it('raw WPM includes typos, net does not', () => {
     const g = makeGame(['house'], ['abandoned']);
     spawnEmerged(g);
@@ -336,73 +343,153 @@ describe('wpm', () => {
   });
 });
 
-describe('adaptive spawner', () => {
-  /**
-   * A bot that types at `wpm` (steady keystrokes, no typos) and takes `switchTime`
-   * to start the next word. Returns how much of the time it sat idle with nothing to type.
-   */
-  function runBot(wpm: number, seconds: number, adaptive: boolean) {
-    const saved = cfg.adaptive.enabled;
-    cfg.adaptive.enabled = adaptive;
-    const g = makeGame(ENGLISH_200, HARD_WORDS, 11);
+describe('waves', () => {
+  /** Run a game with a bot typing at `wpm` (no typos, 0.3 s to switch words) until `seconds` or the end. */
+  function runBot(wpm: number, seconds: number, mode: Mode, seed = 11) {
+    const rng = createRng(seed);
+    const g = new Game(cfg, rng.fork('game'), new WordPicker(rng.fork('words')), { normal: ENGLISH_200, hard: HARD_WORDS }, currentLayout(), CONFIG.layout.spawnWeights, mode);
     const gap = 60 / (wpm * 5);
     const dt = 1 / 120;
     let nextKey = 0;
-    let idle = 0;
-    let measured = 0;
-    const warmup = 10;
+    let peakAlive = 0;
+    const events: GameEvent[] = [];
+    const overMax: number[] = [];
     while (g.time < seconds && !g.over) {
       g.update(dt);
+      events.push(...g.drainEvents());
+      peakAlive = Math.max(peakAlive, g.zombies.length);
+      if (g.zombies.length > g.params.maxAlive) overMax.push(g.wave);
       const locked = g.locked;
       if (locked) {
         if (g.time >= nextKey) {
           g.key(locked.word[locked.typed], nextKey);
           nextKey += gap;
-          if (!g.locked) nextKey = g.time + 0.3; // switch to the next word
+          if (!g.locked) nextKey = g.time + 0.3;
         }
       } else if (g.time >= nextKey) {
         const target = g.zombies.filter((z) => z.labelled).sort((a, b) => b.z - a.z)[0];
         if (target) {
           g.key(target.word[0], g.time);
           nextKey = g.time + gap;
-        } else if (g.time > warmup) {
-          idle += dt;
         }
       }
-      if (g.time > warmup) measured += dt;
+      events.push(...g.drainEvents());
     }
-    cfg.adaptive.enabled = saved;
-    return { g, idleShare: idle / Math.max(measured, 1e-9) };
+    return { g, events, peakAlive, overMax };
   }
 
-  it('keeps a 100+ WPM typist busy', () => {
-    const { g, idleShare } = runBot(110, 150, true);
-    expect(g.over).toBe(false);
-    expect(idleShare).toBeLessThan(0.1);
-    expect(g.typingWpm()).toBeGreaterThan(105);
-    // Run WPM also pays the 0.3 s read-and-switch per ~4 letter word, so ~60-65 is the ceiling here
-    expect(g.runWpm).toBeGreaterThan(58);
+  it('wave formula: wave 1 is 5 zombies every 2.5 s, max 3, then the ramp', () => {
+    const W = cfg.waves;
+    const w1 = waveParams(W, 1);
+    expect(w1).toMatchObject({ size: 5, interval: 2.5, maxAlive: 3, speed: 1, hunterMax: 1 });
+    const w2 = waveParams(W, 2);
+    expect(w2.size).toBe(7);
+    expect(w2.interval).toBeCloseTo(2.5 * 0.93, 9);
+    expect(w2.maxAlive).toBe(3);
+    expect(waveParams(W, 3).maxAlive).toBe(4);
+    expect(waveParams(W, 11).maxAlive).toBe(8);
+    expect(waveParams(W, 30).maxAlive).toBe(8); // cap
+    expect(waveParams(W, 40).interval).toBe(0.8); // floor
+    expect(waveParams(W, 5).speed).toBeCloseTo(Math.pow(1.04, 4), 9);
+    expect(waveParams(W, 30).speed).toBe(1.8); // cap
+    expect(waveParams(W, 12).hunterMax).toBe(1);
+    expect(waveParams(W, 13).hunterMax).toBe(2);
+    expect(waveParams(W, 20).size).toBe(5 + 2 * 19);
   });
 
-  it('without it, the timed spawner starves a fast typist (the old ~30 WPM ceiling)', () => {
-    const { g, idleShare } = runBot(110, 60, false);
-    expect(idleShare).toBeGreaterThan(0.4);
-    expect(g.runWpm).toBeLessThan(45);
+  it('the banner comes first: nothing spawns during the intro', () => {
+    const g = makeGame();
+    expect(g.drainEvents()).toEqual([{ type: 'waveStart', wave: 1 }]);
+    for (let i = 0; i < Math.floor(cfg.waves.introTime * 60) - 2; i++) g.update(1 / 60);
+    expect(g.phase).toBe('intro');
+    expect(g.zombies.length).toBe(0);
+    for (let i = 0; i < 6; i++) g.update(1 / 60);
+    expect(g.phase).toBe('active');
+    expect(g.zombies.length).toBe(1);
   });
 
-  it('does not flood a slow typist, from the very start', () => {
-    const rng = createRng(3);
-    const g = new Game(cfg, rng.fork('game'), new WordPicker(rng.fork('words')), { normal: ENGLISH_200, hard: HARD_WORDS }, currentLayout(), CONFIG.layout.spawnWeights);
-    let peak = 0;
-    for (let i = 0; i < 60 * 8; i++) {
+  it('a wave spawns exactly its size, never more than max alive, then clears, breaks, and the next wave starts', () => {
+    const { g, events, overMax } = runBot(70, 60, 'endless');
+    expect(overMax).toEqual([]);
+    const cleared = events.filter((e) => e.type === 'waveCleared').map((e) => (e as { wave: number }).wave);
+    const started = events.filter((e) => e.type === 'waveStart').map((e) => (e as { wave: number }).wave);
+    expect(cleared.slice(0, 2)).toEqual([1, 2]);
+    expect(started.slice(0, 3)).toEqual([1, 2, 3]);
+    expect(g.stats.wavesCleared).toBe(cleared.length);
+    // every zombie of a cleared wave was spawned and killed: wave sizes add up to the kills
+    let size = 0;
+    for (const w of cleared) size += waveParams(cfg.waves, w).size;
+    expect(g.stats.kills).toBeGreaterThanOrEqual(size);
+  });
+
+  it('the break lasts breakTime after a clear', () => {
+    const g = makeGame();
+    for (let i = 0; i < 60 * 60 && g.phase !== 'break'; i++) {
       g.update(1 / 60);
-      peak = Math.max(peak, g.zombies.length);
+      for (const z of [...g.zombies]) if (z.labelled && g.lockedId === null) typeWord(g, z.word);
     }
-    // nobody typed yet: a modest opening field spread over three streets, not a horde
-    expect(peak).toBeLessThanOrEqual(10);
-    const { g: slow } = runBot(30, 60, true);
-    expect(slow.over).toBe(false);
-    expect(slow.zombies.length).toBeLessThanOrEqual(12);
+    expect(g.phase).toBe('break');
+    const wave = g.wave;
+    for (let i = 0; i < Math.floor(cfg.waves.breakTime * 60) - 2; i++) g.update(1 / 60);
+    expect(g.wave).toBe(wave);
+    for (let i = 0; i < 4; i++) g.update(1 / 60);
+    expect(g.wave).toBe(wave + 1);
+    expect(g.phase).toBe('intro');
+  });
+
+  it('waves mode is won after the last wave; endless keeps going', () => {
+    const saved = cfg.waves.count;
+    cfg.waves.count = 2;
+    const won = runBot(90, 120, 'waves');
+    expect(won.g.won).toBe(true);
+    expect(won.g.over).toBe(true);
+    expect(won.events.some((e) => e.type === 'win')).toBe(true);
+    expect(won.g.stats.wavesCleared).toBe(2);
+    const endless = runBot(90, 130, 'endless');
+    expect(endless.g.won).toBe(false);
+    expect(endless.g.stats.wavesCleared).toBeGreaterThan(2);
+    cfg.waves.count = saved;
+  });
+
+  it('enemy mix: walkers only in waves 1 and 2, hunters from wave 6, hunters capped', () => {
+    const kindsAt = (wave: number, n: number) => {
+      const out: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const g = makeGame(ENGLISH_200, HARD_WORDS, 100 + i);
+        g.wave = wave;
+        g.trySpawn();
+        out.push(g.zombies[0].kind);
+      }
+      return out;
+    };
+    expect(new Set([...kindsAt(1, 60), ...kindsAt(2, 60)])).toEqual(new Set(['walker']));
+    expect(kindsAt(5, 80)).not.toContain('hunter');
+    expect(kindsAt(6, 200)).toContain('hunter');
+    // hunter cap: with one hunter alive in wave 6, no second one
+    const g = makeGame();
+    g.wave = 6;
+    g.trySpawn('hunter');
+    const S = cfg.spacing;
+    const saved = { ...S };
+    S.side = 0;
+    S.depth = 0;
+    for (let i = 0; i < 40; i++) g.trySpawn();
+    Object.assign(S, saved);
+    expect(g.zombies.filter((z) => z.kind === 'hunter').length).toBe(1);
+  });
+
+  it('word difficulty rises per wave', () => {
+    const avgLen = (wave: number) => {
+      let total = 0;
+      for (let i = 0; i < 80; i++) {
+        const g = makeGame(ENGLISH_200, HARD_WORDS, 300 + i);
+        g.wave = wave;
+        g.trySpawn('walker');
+        total += g.zombies[0].word.length;
+      }
+      return total / 80;
+    };
+    expect(avgLen(10)).toBeGreaterThan(avgLen(1));
   });
 });
 
@@ -465,10 +552,8 @@ describe('crossroads', () => {
       expect(g.trySpawn('walker', street)).toBe(true);
       for (let i = 0; i < 60 * 120 && !g.over; i++) {
         (g as unknown as { spawnTimer: number }).spawnTimer = 1e9;
-        cfg.adaptive.enabled = false;
         g.update(1 / 60);
       }
-      cfg.adaptive.enabled = true;
       expect(g.over).toBe(true);
     }
   });
@@ -490,7 +575,6 @@ describe('crossroads', () => {
   it('zombies merging from the side streets do not stack on top of each other', () => {
     const g = makeGame();
     (g as unknown as { spawnTimer: number }).spawnTimer = 1e9;
-    cfg.adaptive.enabled = false;
     // a wave from both side streets at once, aimed at the same lane
     for (const street of ['left', 'right', 'left', 'right'] as Street[]) g.trySpawn('walker', street);
     for (const z of g.zombies) {
@@ -506,7 +590,6 @@ describe('crossroads', () => {
         for (let b = a + 1; b < main.length; b++)
           minGap = Math.min(minGap, Math.hypot(main[a].x - main[b].x, main[a].z - main[b].z));
     }
-    cfg.adaptive.enabled = true;
     expect(minGap).toBeGreaterThan(0.6);
   });
 
@@ -517,5 +600,264 @@ describe('crossroads', () => {
     expect(a.crossNear - a.crossFar).toBeCloseTo(5, 6);
     expect(a.leftX - a.leftEndX).toBeCloseTo(10, 6);
     expect(a.startZ - a.mainFarZ).toBeCloseTo(70, 6);
+  });
+});
+
+describe('enemy types (Part C)', () => {
+  /** Put a just-spawned zombie in the main alley, labelled, walking straight at you. */
+  function place(g: Game, x: number, z: number) {
+    const zb = g.zombies[g.zombies.length - 1];
+    Object.assign(zb, { x, z, laneX: x, emerged: true, labelled: true, labelledAt: g.time });
+    return zb;
+  }
+  /** No wave spawns: hold the game in a break that never ends. */
+  const stopSpawns = (g: Game) => {
+    g.phase = 'break';
+    g.phaseTime = -1e9;
+  };
+
+  it('runners are 1.8x walker speed and carry 3-4 letter words', () => {
+    for (let i = 0; i < 30; i++) {
+      const g = makeGame(ENGLISH_200, HARD_WORDS, 500 + i);
+      expect(g.trySpawn('runner')).toBe(true);
+      const r = g.zombies[0];
+      expect(r.word.length).toBeGreaterThanOrEqual(3);
+      expect(r.word.length).toBeLessThanOrEqual(4);
+      expect(r.baseSpeed / cfg.walker.speed).toBeCloseTo(1.8, 6);
+    }
+  });
+
+  it('Bisk walks to its stop point partway down the alley and stays there', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = g.zombies[0];
+    for (let i = 0; i < 60 * 60; i++) {
+      g.update(1 / 60);
+      for (const z of [...g.zombies]) if (z.kind === 'blob' && g.lockedId === null) typeWord(g, z.word);
+    }
+    expect(g.over).toBe(false);
+    expect(b.z).toBeCloseTo(cfg.playerZ - cfg.bisk.stopDistance, 3);
+    expect(b.speed).toBe(0);
+  });
+
+  it('Bisk lunges ~2 s after its word appears, then a labelled blob flies at you and blinds you', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    const events: GameEvent[] = [];
+    let lungeAt = -1;
+    let blobAt = -1;
+    for (let i = 0; i < 60 * 6 && g.stats.timesBlinded === 0; i++) {
+      g.update(1 / 60);
+      for (const e of g.drainEvents()) {
+        events.push(e);
+        if (e.type === 'lunge' && lungeAt < 0) lungeAt = g.time;
+        if (e.type === 'spawn' && e.zombie.kind === 'blob' && blobAt < 0) blobAt = g.time;
+      }
+    }
+    expect(lungeAt - b.labelledAt).toBeCloseTo(cfg.bisk.spit.firstDelay, 1);
+    expect(blobAt - lungeAt).toBeCloseTo(cfg.bisk.spit.windup, 1);
+    const hit = events.find((e) => e.type === 'blinded');
+    expect(hit).toBeDefined();
+    expect(g.time - blobAt).toBeCloseTo(cfg.bisk.spit.travelTime, 1);
+    expect(g.blindLevel).toBe(1);
+    expect(g.over).toBe(false); // a blob never counts as reaching you
+    // blind fades back over the last 0.5 s
+    for (let i = 0; i < Math.round((cfg.bisk.blind.time - 0.25) * 60); i++) g.update(1 / 60);
+    expect(g.blindLevel).toBeGreaterThan(0.3);
+    expect(g.blindLevel).toBeLessThan(0.7);
+    for (let i = 0; i < 30; i++) g.update(1 / 60);
+    expect(g.blindLevel).toBe(0);
+  });
+
+  it('typing the blob word breaks it; the blob has a unique first letter and short word', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    let blob = null as null | (typeof g.zombies)[number];
+    for (let i = 0; i < 60 * 4 && !blob; i++) {
+      g.update(1 / 60);
+      blob = g.zombies.find((z) => z.kind === 'blob') ?? null;
+    }
+    expect(blob).not.toBeNull();
+    expect(blob!.labelled).toBe(true);
+    expect(blob!.word.length).toBeLessThanOrEqual(4);
+    expect(blob!.word[0]).not.toBe(b.word[0]);
+    typeWord(g, blob!.word);
+    expect(g.zombies.find((z) => z.kind === 'blob')).toBeUndefined();
+    expect(g.stats.spitsBroken).toBe(1);
+    for (let i = 0; i < 60 * 3; i++) g.update(1 / 60);
+    expect(g.stats.timesBlinded).toBe(0);
+  });
+
+  it('strict lock: mid-word on another zombie, the blob cannot be typed', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    g.trySpawn('walker');
+    const w = place(g, 1, -12);
+    w.word.length; // a word of at least 2 letters
+    g.key(w.word[0]);
+    let blob = null as null | (typeof g.zombies)[number];
+    for (let i = 0; i < 60 * 4 && !blob; i++) {
+      g.update(1 / 60);
+      blob = g.zombies.find((z) => z.kind === 'blob') ?? null;
+    }
+    g.key(blob!.word[0]);
+    expect(g.lockedId).toBe(w.id);
+  });
+
+  it('Bisk keeps spitting while alive and stops once killed', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    let lunges = 0;
+    for (let i = 0; i < 60 * 14; i++) {
+      g.update(1 / 60);
+      for (const e of g.drainEvents()) if (e.type === 'lunge') lunges++;
+      for (const z of [...g.zombies]) if (z.kind === 'blob' && g.lockedId === null) typeWord(g, z.word);
+    }
+    expect(lunges).toBeGreaterThanOrEqual(2);
+    typeWord(g, b.word.slice(b.typed));
+    expect(g.zombies.some((z) => z.kind === 'bisk')).toBe(false);
+    let after = 0;
+    for (let i = 0; i < 60 * 10; i++) {
+      g.update(1 / 60);
+      for (const e of g.drainEvents()) if (e.type === 'lunge') after++;
+    }
+    expect(after).toBe(0);
+  });
+
+  it('blobs do not count toward max alive, and a wave is not cleared while one is in flight', () => {
+    const g = makeGame();
+    g.trySpawn('bisk', 'straight');
+    place(g, 0, -8).path = [{ x: 0, z: -8 }];
+    for (let i = 0; i < 60 * 4 && !g.zombies.some((z) => z.kind === 'blob'); i++) g.update(1 / 60);
+    expect(g.zombies.length).toBe(2);
+    expect(g.enemiesAlive).toBe(1);
+  });
+
+  it('wave mix brings runners from wave 3 and Bisk from wave 4, one Bisk at a time', () => {
+    const kindsAt = (wave: number, n: number) => {
+      const out: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const g = makeGame(ENGLISH_200, HARD_WORDS, 700 + i);
+        g.wave = wave;
+        g.trySpawn();
+        out.push(g.zombies[0].kind);
+      }
+      return out;
+    };
+    expect(kindsAt(3, 120)).toContain('runner');
+    expect(kindsAt(3, 120)).not.toContain('bisk');
+    expect(kindsAt(4, 300)).toContain('bisk');
+    const g = makeGame();
+    g.wave = 8;
+    g.trySpawn('bisk');
+    const S = cfg.spacing;
+    const saved = { ...S };
+    S.side = 0;
+    S.depth = 0;
+    for (let i = 0; i < 40; i++) g.trySpawn();
+    Object.assign(S, saved);
+    expect(g.zombies.filter((z) => z.kind === 'bisk').length).toBe(1);
+  });
+});
+
+describe('score and stats (Part F)', () => {
+  /** Play wave 1 with perfect typing (plus `typos` stray keys early on) until it is cleared. */
+  function clearWave1(typos: number) {
+    const g = makeGame();
+    const events: GameEvent[] = [];
+    let strays = typos;
+    for (let i = 0; i < 120 * 60 && g.phase !== 'break'; i++) {
+      g.update(1 / 60);
+      for (const z of [...g.zombies]) {
+        if (!z.labelled || g.lockedId !== null) continue;
+        if (strays > 0) {
+          const used = new Set(g.zombies.map((o) => o.word[0]));
+          g.key([...'abcdefghijklmnopqrstuvwxyz'].find((c) => !used.has(c))!);
+          strays--;
+        }
+        typeWord(g, z.word);
+      }
+      events.push(...g.drainEvents());
+    }
+    return { g, cleared: events.find((e) => e.type === 'waveCleared') };
+  }
+
+  it('kills score by type, times the combo tier', () => {
+    const S = cfg.score;
+    expect(S.kill).toEqual({ walker: 100, runner: 150, bisk: 250, hunter: 400, blob: 75 });
+    const g = makeGame(['house'], ['abandoned']);
+    spawnEmerged(g);
+    g.combo = 12; // 2x tier, and stays there for the whole word (17 < 25)
+    typeWord(g, 'house');
+    expect(g.score).toBe(5 * S.perLetter * 2 + S.kill.walker * 2);
+    expect(g.stats.killsByKind.walker).toBe(1);
+  });
+
+  it('a hunter kill is worth 400 at 1x', () => {
+    const g = makeGame(['house'], ['abandoned']);
+    expect(g.trySpawn('hunter')).toBe(true);
+    const h = g.zombies[0];
+    h.labelled = true;
+    typeWord(g, h.word);
+    expect(g.score).toBe(h.word.length * cfg.score.perLetter + 400);
+    expect(g.stats.killsByKind.hunter).toBe(1);
+    expect(g.stats.kills).toBe(1);
+  });
+
+  it('wave clear bonus: 200 x wave, x1.5 with no typos, no combo multiplier', () => {
+    const clean = clearWave1(0);
+    expect(clean.cleared).toMatchObject({ wave: 1, bonus: 300, clean: true });
+    expect(clean.g.stats.waves[0]).toMatchObject({ wave: 1, bonus: 300, cleared: true, typos: 0 });
+    const dirty = clearWave1(1);
+    expect(dirty.cleared).toMatchObject({ wave: 1, bonus: 200, clean: false });
+    expect(dirty.g.stats.waves[0].typos).toBe(1);
+  });
+
+  it('per key: hits on the typed key, a locked miss on the expected letter, a stray miss on the key pressed', () => {
+    const g = makeGame(['house'], ['abandoned']);
+    spawnEmerged(g);
+    g.key('q'); // nothing starts with q
+    g.key('h');
+    g.key('x'); // expected o
+    typeWord(g, 'ouse');
+    expect(g.stats.keys.q).toEqual({ hits: 0, misses: 1 });
+    expect(g.stats.keys.o).toEqual({ hits: 1, misses: 1 });
+    expect(g.stats.keys.h).toEqual({ hits: 1, misses: 0 });
+    expect(g.stats.keys.x).toBeUndefined();
+  });
+
+  it('reaction time runs from the label appearing to the first letter', () => {
+    const g = makeGame(['house', 'zebra'], ['abandoned']);
+    spawnEmerged(g);
+    spawnEmerged(g);
+    const [a, b] = g.zombies;
+    a.labelledAt = 1;
+    b.labelledAt = 2;
+    g.time = 2.5;
+    typeWord(g, a.word); // 1.5 s
+    g.time = 3;
+    typeWord(g, b.word); // 1 s
+    expect(g.reactionAvg).toBeCloseTo(1.25, 9);
+    expect(g.stats.reactionBest).toBeCloseTo(1, 9);
+  });
+
+  it('per-wave typing numbers add up to the run totals', () => {
+    const { g } = clearWave1(0);
+    const w = g.stats.waves[0];
+    expect(w.typingCorrect).toBe(g.stats.typingCorrect);
+    expect(w.typingTime).toBeCloseTo(g.stats.typingTime, 9);
   });
 });

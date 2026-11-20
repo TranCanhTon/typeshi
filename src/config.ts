@@ -16,8 +16,12 @@ export const CONFIG = {
   // ---------------------------------------------------------------------------
   look: {
     render: {
-      /** Internal render width in pixels. Height follows the window aspect (480 -> 270 at 16:9). */
-      width: 480,
+      /**
+       * Internal render width in pixels; height follows the window aspect (800 -> 450 at 16:9).
+       * v2: up from 480 so characters, props and labels read cleaner. Wall textures stay
+       * crunchy because they are 64 px with nearest filtering.
+       */
+      width: 800,
     },
     ps1: {
       /** 0 = no dithering, 1 = one full color step of ordered (Bayer 4x4) noise. */
@@ -152,6 +156,65 @@ export const CONFIG = {
     stains: 10,
   },
 
+  /**
+   * Sound (src/audio/audio.ts). Every event has a file name; drop files into
+   * public/assets/sounds/ with that name and one of the extensions below. A
+   * missing file is simply silent.
+   */
+  /** Run stats, personal bests and the results screen (v2 Part F). */
+  stats: {
+    /** localStorage keys: run history and personal bests per mode (`<pbKey>.<mode>`). */
+    runsKey: 'deadkeys.runs',
+    pbKey: 'deadkeys.pb',
+    /** How many past runs to keep. */
+    historySize: 50,
+    /**
+     * WPM, accuracy and reaction time only count for a personal best after this
+     * many correct letters, so a 3-letter run can't set a 100% accuracy best.
+     */
+    pbMinChars: 50,
+    /** Worst keys list: how many, and the attempts a key needs to be listed. */
+    worstKeys: 5,
+    worstKeyMinAttempts: 5,
+    /** Keyboard heatmap: keys at or below this accuracy get the full warning colour. */
+    heatFloor: 0.8,
+    /** How many typoed words the results screen lists. */
+    typoWordsShown: 30,
+  },
+
+  /**
+   * Player settings from the pause menu, saved in localStorage under
+   * `storageKey`. Defaults come from look.render.width and audio.volume.
+   */
+  settings: {
+    storageKey: 'deadkeys.settings',
+    renderWidth: { min: 320, max: 1920, step: 16 },
+  },
+
+  audio: {
+    base: '/assets/sounds/',
+    /** Tried in this order for each name. */
+    extensions: ['ogg', 'mp3', 'wav'],
+    /** Default volumes 0..1 (the pause menu settings override these and are saved). */
+    volume: { master: 0.8, sfx: 0.9, ambience: 0.5 },
+    /** Random pitch variation on gunshots (+/- fraction). */
+    gunshotPitchJitter: 0.08,
+    /** Event -> file names (several = a random pick each time). */
+    files: {
+      gunshot: ['gunshot_1', 'gunshot_2', 'gunshot_3'],
+      jam: ['jam'],
+      hit: ['hit'],
+      zombieDeath: ['zombie_death'],
+      runnerBark: ['runner_bark'],
+      biskSpit: ['bisk_spit'],
+      spitBreak: ['spit_break'],
+      blinded: ['blinded'],
+      waveStart: ['wave_start'],
+      gameOver: ['game_over'],
+      ambience: ['ambience'],
+    },
+  },
+
   /** Word labels over the zombies' heads. */
   labels: {
     /** Font size in CSS pixels (fixed, so the layout doesn't shift as zombies approach). */
@@ -167,6 +230,22 @@ export const CONFIG = {
     gap: 3,
     /** Extra sideways margin a pushed label keeps, so it doesn't flick in and out of the stack (px). */
     stackHysteresis: 12,
+    /** Colour of the locked label's border, typed letters, its stem, and the outline on its zombie. */
+    lockColor: '#ff9a3c',
+    /** Outline thickness on the locked zombie (m). */
+    lockOutline: 0.035,
+    /** Every label has a stem down to its own zombie's head (px wide, colour). */
+    stemWidth: 1,
+    stemColor: 'rgba(241, 228, 200, 0.55)',
+    /** Small type marker before the word. Walkers have none. */
+    markers: {
+      runner: '#ffd23a',
+      bisk: '#5cff3a',
+      blob: '#5cff3a',
+      hunter: '#ff3a2e',
+    },
+    /** Marker size (px). */
+    markerSize: 8,
   },
 
   // ---------------------------------------------------------------------------
@@ -232,12 +311,125 @@ export const CONFIG = {
       height: 1.75,
       /** Random size variation (+/- fraction). */
       sizeJitter: 0.08,
-      /** Walk animation speed (m/s) at timeScale 1, so feet roughly match the ground. */
-      animSpeed: 1.0,
       /** Random walk animation speed variation (+/- fraction). */
       animJitter: 0.15,
       /** Random tint variation (+/- fraction per channel). */
       tintJitter: 0.18,
+
+      /**
+       * Free Zombies pack by Denys Almaral (FAB). Ten rigged zombies on two
+       * skeletons (female / male); animations are separate files per skeleton.
+       * Each spawn picks a random zombie and a random walk style.
+       */
+      model: {
+        base: '/assets/models/freezombies/',
+        /** The rigs reference this texture by bare name; it lives in Textures/. */
+        texture: 'Textures/zcolors.png',
+        /** rig-gltf_joined/<name>_joined.gltf. The prefix says which skeleton it uses. */
+        variants: [
+          'ZombieFemale_A', 'ZombieFemale_B', 'ZombieFemale_C', 'ZombieFemale_D', 'ZombieFemale_E',
+          'ZombieMale_A', 'ZombieMale_B', 'ZombieMale_C', 'ZombieMale_D', 'ZombieMale_E',
+        ],
+        /**
+         * Walk styles: animation file suffix, and the ground speed (m/s) the feet
+         * match at normal playback, so the cycle is sped up or slowed to fit the
+         * zombie's actual speed. The clips walk in place; the game moves the body.
+         */
+        walks: [
+          { file: 'walk_64f', groundSpeed: 0.65 },
+          { file: 'slowWalk_85f', groundSpeed: 0.45 },
+          { file: 'walk_agressive_64f', groundSpeed: 0.75 },
+          { file: 'walk_limp_60f', groundSpeed: 0.5 },
+        ],
+        /** Keep playback within this range so very fast or slow walkers don't look silly. */
+        timeScaleRange: [0.6, 2.2] as [number, number],
+      },
+      /** The pack has no hit or death animations, so both are procedural. */
+      hit: {
+        /** Lean back (rad) and knock back (m) on each hit, easing out over `time` seconds. */
+        lean: 0.22,
+        knock: 0.1,
+        shake: 0.05,
+        time: 0.3,
+      },
+      death: {
+        /** Stagger, then topple backward over this many seconds. */
+        toppleTime: 0.85,
+        /** The walk cycle slows to a stop over this many seconds. */
+        freezeTime: 0.2,
+      },
+    },
+
+    /** Runner: the zombie dog. Fast, low, short words. */
+    runner: {
+      /** 1.8x the walker's 1.1 m/s. */
+      speed: 1.98,
+      slowFactor: 0.35,
+      slowTime: 0.3,
+      /** Its words are this many letters long (from the normal list). */
+      wordLength: [3, 4] as [number, number],
+      /** "Low poly zombie dog" by onmioji (CC BY 4.0). Swap the path to try another dog. */
+      model: '/assets/models/zombie_dog.glb',
+      /** Height at the shoulders (m). */
+      height: 0.85,
+      sizeJitter: 0.06,
+      tintJitter: 0.15,
+      /** Procedural gallop (no rig): strides per second at base speed, bob (m), body rock (rad). */
+      gallop: { strideRate: 2.4, bob: 0.07, rock: 0.14, sway: 0.04 },
+      /** Death: flops onto its side over this many seconds. */
+      deathTime: 0.45,
+    },
+
+    /**
+     * Bisk, the spitter (Bisk by Rahi_IV, CC BY 4.0, simplified and toned down
+     * into bisk_lod.glb by `npm run simplify:bisk`). Shuffles to a stop point
+     * partway down the main alley and stays there, spitting until killed.
+     */
+    bisk: {
+      /** Shuffle speed (m/s). */
+      speed: 0.55,
+      slowFactor: 0.5,
+      slowTime: 0.3,
+      /** Where it stops: this far from the player (m). Keep it inside labelDistance. */
+      stopDistance: 11,
+      /** Bisks alive at once. */
+      maxAlive: 1,
+      model: '/assets/models/bisk_lod.glb',
+      height: 1.95,
+      sizeJitter: 0.04,
+      /** Shuffle: steps per second, sway (rad), bob (m). */
+      shuffle: { stepRate: 1.6, sway: 0.06, bob: 0.03 },
+      spit: {
+        /** First spit this long after its word appears (s)... */
+        firstDelay: 2,
+        /** ...then every this many seconds (+/- jitter) while it lives. */
+        interval: 4.5,
+        intervalJitter: 1,
+        /** Lunge wind-up before the blob leaves (s). */
+        windup: 0.4,
+        /** Lunge: scale up and lean forward (rad). */
+        lungeScale: 0.15,
+        lungeLean: 0.35,
+        /** Blob words are this many letters long. */
+        wordLength: [3, 4] as [number, number],
+        /** Seconds for the blob to reach you. */
+        travelTime: 1.5,
+        /** Height the blob leaves from, and arrives at (m). */
+        launchHeight: 1.7,
+        arriveHeight: 1.55,
+      },
+      /** A blob that reaches you blinds you for `time` seconds, fading back over the last `fade`. */
+      blind: {
+        time: 2,
+        fade: 0.5,
+        /** Blur radius at full strength (low res pixels), how much darker, and a green tint. */
+        blur: 5,
+        dim: 0.55,
+        tint: 0.18,
+        /** Labels at full strength: blur (px), and how much they fade (still faintly readable). */
+        labelBlur: 2.5,
+        labelFade: 0.5,
+      },
     },
 
     /** The Blind Hunter elite: big, slow, one long hard word. */
@@ -247,18 +439,7 @@ export const CONFIG = {
       slowTime: 0.3,
       height: 2.5,
       sizeJitter: 0.05,
-      /** No hunters before this many seconds into a run. */
-      firstAfter: 25,
-      /** Chance that a spawn is a hunter: starts here... */
-      chanceStart: 0.06,
-      /** ...grows by this per second... */
-      chancePerSecond: 0.001,
-      /** ...up to this. */
-      chanceMax: 0.25,
-      /** Hunters on screen at once, early and late in a run. */
-      maxAlive: 1,
-      maxAliveLate: 2,
-      lateAfter: 120,
+      /** When hunters appear and how often is in `waves.mix`. */
       /** Lurch animation: steps per second at base speed, sway (rad), bob (m). */
       stepRate: 1.4,
       sway: 0.09,
@@ -267,61 +448,75 @@ export const CONFIG = {
     },
 
     /**
-     * Adaptive spawning (on by default, like the spec's adaptive difficulty toggle):
-     * keeps enough words coming for your measured typing speed, so a fast typist
-     * is never left waiting. See Game.updateSpawning.
+     * Waves (both modes). Zombies only ever come in waves: a "Wave N" banner,
+     * then the wave spawns; once everything in it is dead there's a break, then
+     * the next banner. Waves mode ends after `count` waves with the win screen;
+     * endless keeps going on the same formula. The wave formula is the only
+     * thing that decides how many zombies come and how fast.
      */
-    adaptive: {
-      enabled: true,
+    waves: {
+      /** Waves in waves mode. */
+      count: 20,
+      /** How long the "Wave N" banner shows before spawning starts (s). */
+      introTime: 2.5,
+      /** Break after a wave is cleared (s). */
+      breakTime: 3,
+      /** Wave 1. */
+      first: {
+        size: 5,
+        /** Seconds between spawns. */
+        interval: 2.5,
+        maxAlive: 3,
+      },
+      /** How each wave ramps from the one before. */
+      ramp: {
+        sizePerWave: 2,
+        intervalFactor: 0.93,
+        intervalMin: 0.8,
+        /** Max alive goes up by 1 every this many waves... */
+        maxAliveEvery: 2,
+        /** ...up to this. */
+        maxAliveCap: 8,
+        /** Walk speed x this per wave... */
+        speedFactor: 1.04,
+        /** ...up to this. */
+        speedMax: 1.8,
+      },
       /**
-       * Typing WPM assumed before you've typed anything. Kept at about what the
-       * timed spawner gives anyway, so a beginner isn't flooded at the start...
+       * Enemy mix: each type appears from wave `from` and is picked by weight
+       * against the others available. Runner and Bisk arrive with Part C; until
+       * then their spawns go to the types that exist.
        */
-      assumedWpm: 25,
-      /** ...weighted like this many words, so your real speed takes over within a few words. */
-      priorWords: 2,
-      /** Seconds to read and switch to the next word after a kill. */
-      switchTime: 0.35,
-      /** Supply this much more than your measured rate (covers waits at the crossing). */
-      headroom: 1.4,
-      /** Extra zombies kept on the way on top of that. */
-      buffer: 1,
-      /** Hard cap on zombies alive (first letters must stay unique, so keep it well under 26). */
-      maxAlive: 20,
-      /** Minimum seconds between adaptive spawns. */
-      minGap: 0.2,
-    },
-
-    /** Endless mode: how fast things ramp up. */
-    endless: {
-      /** Seconds between spawns at the start... */
-      intervalStart: 2.4,
-      /** ...shrinking toward this... */
-      intervalMin: 0.75,
-      /** ...with this time constant (s). */
-      intervalDecay: 100,
-      /** Max zombies on screen at the start, the cap, and seconds per extra one. */
-      maxAliveStart: 4,
-      maxAliveEnd: 12,
-      maxAliveGrowth: 20,
-      /** Walk speed multiplier grows linearly to speedMax over this many seconds. */
-      speedRampTime: 240,
-      speedMax: 2.0,
+      mix: {
+        walker: { from: 1, weight: 10 },
+        runner: { from: 3, weight: 4 },
+        bisk: { from: 4, weight: 1.6 },
+        hunter: { from: 6, weight: 1.2 },
+      },
+      /** Hunters alive at once: `base`, and `late` from wave `lateFrom`. */
+      hunterMax: { base: 1, late: 2, lateFrom: 13 },
     },
 
     words: {
-      /** Normal zombies prefer words at or below this difficulty at the start... */
+      /** Normal zombies prefer words at or below this difficulty in wave 1... */
       difficultyStart: 4.5,
-      /** ...rising by this per second. */
-      difficultyPerSecond: 0.025,
+      /** ...rising by this every wave. */
+      difficultyPerWave: 0.5,
       /** Don't repeat a word within this many picks. */
       recentMemory: 25,
     },
 
+    /**
+     * v2 Part F. Letters and kills are multiplied by the combo tier at that
+     * moment; the wave clear bonus is not.
+     */
     score: {
       perLetter: 10,
-      perKill: 50,
-      perHunterKill: 250,
+      /** Points for a kill, by type (blob = breaking a spit). */
+      kill: { walker: 100, runner: 150, bisk: 250, hunter: 400, blob: 75 },
+      /** Wave clear bonus = waveClear x wave number, x cleanWaveFactor if the wave had no typos. */
+      waveClear: 200,
+      cleanWaveFactor: 1.5,
       /** [combo needed, multiplier] (GAME_SPEC section 3). */
       tiers: [
         [0, 1],

@@ -2,3 +2,5 @@ node_modules
 dist
 public/assets/models/*.glb
 .env
+.claude/
+public/assets/models/freezombies/
