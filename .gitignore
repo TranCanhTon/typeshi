@@ -1,6 +1,6 @@
 node_modules
 dist
-public/assets/models/*.glb
 .env
 .claude/
-public/assets/models/freezombies/
+# All 3D models (licensed downloads, too big for git): keep them on disk only.
+public/assets/models/

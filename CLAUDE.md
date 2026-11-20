@@ -55,7 +55,8 @@ Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner,
 
 ## Commands
 
-- `npm install` first after cloning or moving the folder (node_modules isn't committed). Model files are gitignored: they live only on disk.
+- `npm install` first after cloning or moving the folder (node_modules isn't committed).
+- **Models are not in git.** Everything under `public/assets/models/` is gitignored (licensed downloads, ~35 MB) and lives only on disk, so back the folder up yourself. Layout: the models the game loads sit at the top (`bisk_lod.glb`, `zombie_dog.glb`, `zombie_blind_hunter.glb`, `freezombies/`); `source/` holds originals the build scripts read (`bisk.glb` for `npm run simplify:bisk`); `unused/` holds models no longer used (`zombie_rinono.glb`, `polyart_zombies.glb`).
 - `npm run dev`: dev server at http://localhost:5173
 - `npm test`: game logic tests (vitest, no Three.js)
 - `npm run build`: typecheck and production build

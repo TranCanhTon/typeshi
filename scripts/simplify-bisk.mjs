@@ -1,4 +1,4 @@
-// Build public/assets/models/bisk_lod.glb from bisk.glb (Bisk by Rahi_IV, CC BY 4.0).
+// Build public/assets/models/bisk_lod.glb from source/bisk.glb (Bisk by Rahi_IV, CC BY 4.0).
 //
 //  1. Bake every mesh into world space (the original nests several transforms).
 //  2. Tone the model down (Ton's call): flatten the chest bulge on the body and
@@ -13,7 +13,7 @@ import { NodeIO } from '@gltf-transform/core';
 import { dedup, flatten, prune, simplifyPrimitive, transformPrimitive, weld } from '@gltf-transform/functions';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
-const SRC = 'public/assets/models/bisk.glb';
+const SRC = 'public/assets/models/source/bisk.glb';
 const OUT = 'public/assets/models/bisk_lod.glb';
 
 /** Triangle budget per material in the finished model. */
