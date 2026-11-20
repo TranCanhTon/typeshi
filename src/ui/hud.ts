@@ -5,17 +5,13 @@
 import { CONFIG } from '../config';
 import type { Game, GameEvent, Mode } from '../game/game';
 import type { Volumes } from '../audio/audio';
+import type { PbResult, RunRecord } from '../game/stats';
+import { resultsHtml } from './results';
 
 /** What the pause menu's Settings view edits. */
 export interface PlayerSettings {
   renderWidth: number;
   volumes: Volumes;
-}
-
-function fmtTime(t: number): string {
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 function waveLabel(game: Game): string {
@@ -55,6 +51,11 @@ export class Hud {
     if (e.type === 'comboTier') this.flash(this.combo, 'up');
     if (e.type === 'waveStart') {
       this.banner.textContent = `Wave ${e.wave}`;
+      this.flash(this.banner, 'show');
+    }
+    if (e.type === 'waveCleared') {
+      const bonus = e.bonus.toLocaleString('en-US');
+      this.banner.innerHTML = `Wave ${e.wave} cleared<small>+${bonus}${e.clean ? ' &middot; no typos x' + CONFIG.game.score.cleanWaveFactor : ''}</small>`;
       this.flash(this.banner, 'show');
     }
   }
@@ -153,36 +154,10 @@ export class Screens {
   }
 
   /** Results after death (or the win in waves mode). */
-  results(game: Game, best: number): void {
-    const stats = game.stats;
-    const newBest = stats.score > 0 && stats.score >= best;
-    const missed = stats.missedWords.slice(0, 12).join(', ') || 'none';
-    const reached = game.won ? `All ${CONFIG.game.waves.count} waves` : `Wave ${game.wave}`;
-    this.root.innerHTML = `
-      <div class="dk-panel">
-        <h1>${game.won ? 'YOU SURVIVED' : 'YOU DIED'}</h1>
-        ${newBest ? '<p class="dk-best">NEW BEST</p>' : ''}
-        <p class="dk-wpm"><span>${game.typingWpm().toFixed(0)}</span> WPM</p>
-        <table>
-          <tr><td>Mode</td><td>${game.mode === 'waves' ? 'Waves' : 'Endless'}</td></tr>
-          <tr><td>Reached</td><td>${reached} (${stats.wavesCleared} cleared)</td></tr>
-          <tr><td>Score</td><td>${stats.score.toLocaleString('en-US')}</td></tr>
-          <tr><td>Best</td><td>${Math.max(best, stats.score).toLocaleString('en-US')}</td></tr>
-          <tr><td>Survived</td><td>${fmtTime(stats.time)}</td></tr>
-          <tr><td>Kills</td><td>${stats.kills} (${stats.hunterKills} hunters)</td></tr>
-          <tr><td>Typing WPM</td><td>${game.typingWpm().toFixed(0)} net &middot; ${game.typingRawWpm().toFixed(0)} raw</td></tr>
-          <tr><td>Run WPM</td><td>${game.runWpm.toFixed(0)} net &middot; ${game.runRawWpm.toFixed(0)} raw</td></tr>
-          <tr><td>Accuracy</td><td>${(game.accuracy * 100).toFixed(1)}%</td></tr>
-          <tr><td>Best combo</td><td>${stats.bestCombo}</td></tr>
-        </table>
-        <p class="dk-small">Typing WPM counts only time spent typing words. Run WPM counts the whole run.</p>
-        <p class="dk-small">Missed words: ${missed}</p>
-        <div class="dk-modes">
-          <button type="button" data-act="retry"><b>ENTER</b> Play again</button>
-          <button type="button" data-act="menu"><b>M</b> Main menu</button>
-        </div>
-      </div>`;
+  results(rec: RunRecord, pb: PbResult): void {
+    this.root.innerHTML = resultsHtml(rec, pb);
     this.root.style.display = '';
+    this.root.scrollTop = 0;
   }
 
   /** Esc mid-run: the pause menu. `settings` is edited in place by the sliders. */

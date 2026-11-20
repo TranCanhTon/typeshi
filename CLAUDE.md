@@ -2,9 +2,9 @@
 
 The full spec is in GAME_SPEC.md. Read it before doing anything, and follow section 0 (Rules for Claude Code).
 
-Current work: **Version 2, parts A to F** (Ton's v2 brief), built in order on branch `feat/v2`. After each part: commit (conventional commits, no co-author line), update this file, tell Ton how to test, and stop until he says go.
+Last work: **Version 2, parts A to F** (Ton's v2 brief), built in order on branch `feat/v2`. After each part: commit (conventional commits, no co-author line), update this file, tell Ton how to test, and stop until he says go.
 
-Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs), **Part D** (which word is which zombie), **Part E** (pause, settings, audio).
+Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs), **Part D** (which word is which zombie), **Part E** (pause, settings, audio), **Part F** (score and stats). v2 is complete.
 
 ## Decisions Ton has made so far
 
@@ -40,6 +40,13 @@ Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner,
   - **Esc pauses** mid-run and Esc again resumes. Esc never reaches `game.key`, so it is never a typo. Paused = the logic is not stepped, so zombies, spawns, spit blobs, the blind timer and the wave timers all hold; views and labels update with dt 0; HUD and label CSS animations are paused. The typing clock runs on key event timestamps, so resume calls `Game.shiftKeyClock(pause length)`. Leaving the tab or window also pauses.
   - **Pause menu** in the panel style: Resume (Esc), Restart (R), Settings (S), Quit to main menu (Q). Settings: render width and master, effects and ambience volume sliders, Back (B). Saved in localStorage under `settings.storageKey` (`deadkeys.settings`).
   - **Audio manager** (`src/audio/audio.ts`): named events mapped from game events, files listed in `CONFIG.audio.files`, looked for in `public/assets/sounds/` as .ogg, .mp3 or .wav. Missing files are silent. Starts on the first key press or click (browser rule). Gunshot picks one of 3 files with a random pitch (`audio.gunshotPitchJitter`), through the seeded RNG. The expected filenames are in `public/assets/sounds/README.md`.
+
+- **Score and stats (Part F).**
+  - **Score** (`game.score`): 10 per correct letter; kills walker 100, runner 150, Bisk 250, Hunter 400, broken spit 75; letters and kills times the combo tier at that moment (1x, 2x at 10, 3x at 25, 4x at 50, 5x at 100). Wave clear bonus 200 x wave number, x1.5 if the wave had no typos, no multiplier; the banner shows "Wave N cleared +bonus".
+  - **Stats per run** (`RunStats` in game.ts, `RunRecord` in `src/game/stats.ts`): Typing WPM (main) and Run WPM, accuracy, best combo, score, waves cleared, time survived, kills per enemy type (spit blobs are not kills, they are spits broken), spits broken vs times blinded, reaction time (label appears to the lock letter, game time), per-key hits and misses, typoed words, and per-wave typing numbers.
+  - **Per-key misses**: while locked, a miss counts against the letter you should have typed; with nothing locked (no word starts with the key) it counts against the key pressed.
+  - **Saved** in localStorage (`src/stats/store.ts`): the last 50 runs in `deadkeys.runs`, and bests per mode in `deadkeys.pb.waves` / `deadkeys.pb.endless` (the old `deadkeys.best.endless` score seeds the endless bests). A best must be strictly beaten; lower reaction time is better. WPM, accuracy and reaction only count for a best after `stats.pbMinChars` (50) letters in words. The first run in a mode sets the bests without badges.
+  - **Results screen** (`src/ui/results.ts`): summary tiles at the top with a PB badge (and the old best) on each new best, Typing WPM per wave as a line chart with the value on every point and the run's Typing WPM as a dashed line (hover a point for accuracy, typos and bonus), a QWERTY heatmap with the accuracy % on each key (warmer = worse, full colour at `stats.heatFloor` 80%), worst 5 keys, typoed words, Restart (Enter) and Main menu (M).
 
 ## v2 decisions for later parts (answered before Part A)
 

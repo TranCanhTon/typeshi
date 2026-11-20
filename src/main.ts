@@ -5,6 +5,8 @@ import { AudioManager } from './audio/audio';
 import { CONFIG, currentLayout } from './config';
 import { Game, type Mode } from './game/game';
 import { createRng } from './game/rng';
+import { buildRecord, compareBests } from './game/stats';
+import { loadBests, saveBests, saveRun } from './stats/store';
 import { buildAlley } from './render/alley';
 import { Dust } from './render/dust';
 import { createGun } from './render/gun';
@@ -19,8 +21,6 @@ import { WordLabels } from './ui/labels';
 import './ui/style.css';
 import { ENGLISH_200, HARD_WORDS } from './words/lists';
 import { WordPicker } from './words/picker';
-
-const BEST_KEY = 'deadkeys.best.endless';
 
 // Live, editable copy of the look settings (the debug panel writes into it).
 const look = structuredClone(CONFIG.look);
@@ -149,22 +149,6 @@ let lastMode: Mode = 'waves';
 /** When the pause started, on the key event clock (performance.now() / 1000). */
 let pausedAt = 0;
 
-function readBest(): number {
-  try {
-    return Number(localStorage.getItem(BEST_KEY)) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveBest(score: number): void {
-  try {
-    if (score > readBest()) localStorage.setItem(BEST_KEY, String(score));
-  } catch {
-    /* storage unavailable: best just isn't kept */
-  }
-}
-
 function startRun(mode: Mode): void {
   lastMode = mode;
   // Each run gets its own seed; everything random in the run flows from it.
@@ -189,13 +173,16 @@ function startRun(mode: Mode): void {
   phase = 'playing';
 }
 
-/** Death or the win: show the results. */
+/** Death or the win: save the run and its bests, show the results. */
 function endRun(g: Game): void {
-  const best = readBest();
-  saveBest(g.score);
+  const rec = buildRecord(g, Date.now());
+  const pb = compareBests(loadBests(g.mode), rec, CONFIG.stats.pbMinChars);
+  saveBests(g.mode, pb.bests);
+  saveRun(rec);
   labels.clear();
   hud.clearBanner();
-  screens.results(g, best);
+  screens.results(rec, pb);
+  unfocus();
   phase = 'over';
 }
 

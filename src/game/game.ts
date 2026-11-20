@@ -82,15 +82,37 @@ export type GameEvent =
   /** A blob reached you: blinded. */
   | { type: 'blinded'; id: number; time: number }
   | { type: 'waveStart'; wave: number }
-  | { type: 'waveCleared'; wave: number }
+  /** `bonus`: the wave clear bonus added to the score; `clean`: the wave had no typos. */
+  | { type: 'waveCleared'; wave: number; bonus: number; clean: boolean }
   | { type: 'win'; wave: number }
   | { type: 'gameover'; id: number };
+
+/** Hits and misses for one key. */
+export interface KeyStat {
+  hits: number;
+  misses: number;
+}
+
+/** Typing numbers for one wave (for the WPM-per-wave chart). */
+export interface WaveStats {
+  wave: number;
+  /** Same meaning as the run totals of the same names, for this wave only. */
+  typingCorrect: number;
+  typingKeys: number;
+  typingTime: number;
+  correctKeys: number;
+  typos: number;
+  /** Wave clear bonus (0 if the wave wasn't cleared). */
+  bonus: number;
+  cleared: boolean;
+}
 
 export interface RunStats {
   time: number;
   score: number;
+  /** Enemies killed (spit blobs not included: those are `spitsBroken`). */
   kills: number;
-  hunterKills: number;
+  killsByKind: Record<EnemyKind, number>;
   bestCombo: number;
   wavesCleared: number;
   /** Blobs broken by typing their word, and blobs that hit. */
@@ -110,8 +132,24 @@ export interface RunStats {
   /** All keys typed inside those spans after the lock key, typos included (for raw WPM). */
   typingKeys: number;
   wordsTyped: number;
-  /** Words the player made a typo on (for mistake replay later). */
-  missedWords: string[];
+  /** Words the player made a typo on, in order, each once. */
+  typoWords: string[];
+  /**
+   * Per key. A hit counts against the key typed. A miss while locked counts
+   * against the letter you should have typed; a miss with nothing locked
+   * (no word starts with it) counts against the key pressed.
+   */
+  keys: Record<string, KeyStat>;
+  /** Reaction time: from a word's label appearing to its first letter (game seconds). */
+  reactionSum: number;
+  reactionCount: number;
+  reactionBest: number;
+  /** One entry per wave reached, in order. */
+  waves: WaveStats[];
+}
+
+function newWaveStats(wave: number): WaveStats {
+  return { wave, typingCorrect: 0, typingKeys: 0, typingTime: 0, correctKeys: 0, typos: 0, bonus: 0, cleared: false };
 }
 
 /** Words per minute from characters and seconds (5 characters = 1 word). */
@@ -143,9 +181,12 @@ export class Game {
   /** Seconds of blindness left (a blob hit you). */
   blindLeft = 0;
   readonly stats: RunStats = {
-    time: 0, score: 0, kills: 0, hunterKills: 0, bestCombo: 0, wavesCleared: 0, spitsBroken: 0, timesBlinded: 0,
+    time: 0, score: 0, kills: 0, killsByKind: { walker: 0, runner: 0, bisk: 0, hunter: 0 },
+    bestCombo: 0, wavesCleared: 0, spitsBroken: 0, timesBlinded: 0,
     correctKeys: 0, typos: 0,
-    typingTime: 0, typingCorrect: 0, typingKeys: 0, wordsTyped: 0, missedWords: [],
+    typingTime: 0, typingCorrect: 0, typingKeys: 0, wordsTyped: 0, typoWords: [],
+    keys: {}, reactionSum: 0, reactionCount: 0, reactionBest: Infinity,
+    waves: [],
   };
   private events: GameEvent[] = [];
   private nextId = 1;
@@ -169,6 +210,7 @@ export class Game {
     readonly mode: Mode = 'endless',
   ) {
     this.events.push({ type: 'waveStart', wave: this.wave });
+    this.stats.waves.push(newWaveStats(this.wave));
   }
 
   // -------------------------------------------------------------------------
@@ -235,6 +277,16 @@ export class Game {
     return wpmOf(this.stats.correctKeys + this.stats.typos, this.time);
   }
 
+  /** Average reaction time (s): label appears to first letter. 0 if no word was started. */
+  get reactionAvg(): number {
+    return this.stats.reactionCount > 0 ? this.stats.reactionSum / this.stats.reactionCount : 0;
+  }
+
+  /** Stats of the wave being played. */
+  get waveStats(): WaveStats {
+    return this.stats.waves[this.stats.waves.length - 1];
+  }
+
   get accuracy(): number {
     const total = this.stats.correctKeys + this.stats.typos;
     return total > 0 ? this.stats.correctKeys / total : 1;
@@ -266,8 +318,10 @@ export class Game {
     if (locked) {
       const expected = locked.word[locked.typed];
       this.stats.typingKeys++;
+      this.waveStats.typingKeys++;
       if (ch === expected) {
         this.stats.typingCorrect++;
+        this.waveStats.typingCorrect++;
         this.hit(locked, at);
       } else {
         this.typo(locked, ch, expected);
@@ -281,6 +335,10 @@ export class Game {
     if (target) {
       this.lockedId = target.id;
       this.lockStart = at; // this key starts the word's clock
+      const reaction = Math.max(0, this.time - target.labelledAt);
+      this.stats.reactionSum += reaction;
+      this.stats.reactionCount++;
+      this.stats.reactionBest = Math.min(this.stats.reactionBest, reaction);
       this.events.push({ type: 'lock', id: target.id });
       this.hit(target, at);
     } else {
@@ -301,18 +359,22 @@ export class Game {
   /** Close the current word's typing span. */
   private endSpan(at: number): void {
     if (this.lockStart === null) return;
-    this.stats.typingTime += Math.max(0, at - this.lockStart);
+    const t = Math.max(0, at - this.lockStart);
+    this.stats.typingTime += t;
+    this.waveStats.typingTime += t;
     this.lockStart = null;
   }
 
   private hit(z: Zombie, at: number): void {
     const tierBefore = this.multiplier;
+    this.keyStat(z.word[z.typed]).hits++;
     z.typed++;
     this.combo++;
     this.stats.correctKeys++;
+    this.waveStats.correctKeys++;
     this.stats.bestCombo = Math.max(this.stats.bestCombo, this.combo);
     if (this.multiplier > tierBefore) this.events.push({ type: 'comboTier', multiplier: this.multiplier });
-    this.score += this.cfg.score.perLetter * this.multiplier;
+    this.addScore(this.cfg.score.perLetter * this.multiplier);
     z.slowTimer = this.kindCfg(z.kind).slowTime;
     this.events.push({ type: 'shot', id: z.id, index: z.typed - 1 });
     if (z.typed >= z.word.length) {
@@ -323,12 +385,14 @@ export class Game {
   }
 
   private kill(z: Zombie): void {
-    const base = z.kind === 'hunter' ? this.cfg.score.perHunterKill : this.cfg.score.perKill;
-    const points = base * this.multiplier;
-    this.score += points;
-    this.stats.kills++;
-    if (z.kind === 'hunter') this.stats.hunterKills++;
-    if (z.kind === 'blob') this.stats.spitsBroken++;
+    const points = this.cfg.score.kill[z.kind] * this.multiplier;
+    this.addScore(points);
+    if (z.kind === 'blob') {
+      this.stats.spitsBroken++;
+    } else {
+      this.stats.kills++;
+      this.stats.killsByKind[z.kind]++;
+    }
     this.zombies.splice(this.zombies.indexOf(z), 1);
     if (this.lockedId === z.id) this.lockedId = null;
     this.events.push({ type: 'kill', id: z.id, kind: z.kind, points });
@@ -337,8 +401,19 @@ export class Game {
   private typo(z: Zombie | null, key: string, expected: string | null): void {
     this.combo = 0;
     this.stats.typos++;
-    if (z && !this.stats.missedWords.includes(z.word)) this.stats.missedWords.push(z.word);
+    this.waveStats.typos++;
+    this.keyStat(expected ?? key).misses++;
+    if (z && !this.stats.typoWords.includes(z.word)) this.stats.typoWords.push(z.word);
     this.events.push({ type: 'typo', id: z?.id ?? null, key, expected });
+  }
+
+  private keyStat(k: string): KeyStat {
+    return (this.stats.keys[k] ??= { hits: 0, misses: 0 });
+  }
+
+  private addScore(points: number): void {
+    this.score += points;
+    this.stats.score = this.score;
   }
 
   // -------------------------------------------------------------------------
@@ -348,14 +423,13 @@ export class Game {
   update(dt: number): void {
     if (this.over) return;
     this.time += dt;
+    this.stats.time = this.time;
     this.blindLeft = Math.max(0, this.blindLeft - dt);
     this.updateWave(dt);
     this.moveZombies(dt);
     if (this.over) return;
     this.updateBisks(dt);
     this.updateBlobs(dt);
-    this.stats.time = this.time;
-    this.stats.score = this.score;
   }
 
   // --- Waves ----------------------------------------------------------------
@@ -409,7 +483,13 @@ export class Game {
         }
       } else if (this.zombies.length === 0) {
         this.stats.wavesCleared++;
-        this.events.push({ type: 'waveCleared', wave: this.wave });
+        const S = this.cfg.score;
+        const ws = this.waveStats;
+        const clean = ws.typos === 0;
+        ws.bonus = Math.round(S.waveClear * this.wave * (clean ? S.cleanWaveFactor : 1));
+        ws.cleared = true;
+        this.addScore(ws.bonus);
+        this.events.push({ type: 'waveCleared', wave: this.wave, bonus: ws.bonus, clean });
         if (this.mode === 'waves' && this.wave >= W.count) {
           this.won = true;
           this.over = true;
@@ -421,6 +501,7 @@ export class Game {
       }
     } else if (this.phaseTime >= W.breakTime) {
       this.wave++;
+      this.stats.waves.push(newWaveStats(this.wave));
       this.waveSpawned = 0;
       this.setPhase('intro');
       this.events.push({ type: 'waveStart', wave: this.wave });

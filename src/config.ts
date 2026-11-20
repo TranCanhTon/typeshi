@@ -161,6 +161,27 @@ export const CONFIG = {
    * public/assets/sounds/ with that name and one of the extensions below. A
    * missing file is simply silent.
    */
+  /** Run stats, personal bests and the results screen (v2 Part F). */
+  stats: {
+    /** localStorage keys: run history and personal bests per mode (`<pbKey>.<mode>`). */
+    runsKey: 'deadkeys.runs',
+    pbKey: 'deadkeys.pb',
+    /** How many past runs to keep. */
+    historySize: 50,
+    /**
+     * WPM, accuracy and reaction time only count for a personal best after this
+     * many correct letters, so a 3-letter run can't set a 100% accuracy best.
+     */
+    pbMinChars: 50,
+    /** Worst keys list: how many, and the attempts a key needs to be listed. */
+    worstKeys: 5,
+    worstKeyMinAttempts: 5,
+    /** Keyboard heatmap: keys at or below this accuracy get the full warning colour. */
+    heatFloor: 0.8,
+    /** How many typoed words the results screen lists. */
+    typoWordsShown: 30,
+  },
+
   /**
    * Player settings from the pause menu, saved in localStorage under
    * `storageKey`. Defaults come from look.render.width and audio.volume.
@@ -485,10 +506,17 @@ export const CONFIG = {
       recentMemory: 25,
     },
 
+    /**
+     * v2 Part F. Letters and kills are multiplied by the combo tier at that
+     * moment; the wave clear bonus is not.
+     */
     score: {
       perLetter: 10,
-      perKill: 50,
-      perHunterKill: 250,
+      /** Points for a kill, by type (blob = breaking a spit). */
+      kill: { walker: 100, runner: 150, bisk: 250, hunter: 400, blob: 75 },
+      /** Wave clear bonus = waveClear x wave number, x cleanWaveFactor if the wave had no typos. */
+      waveClear: 200,
+      cleanWaveFactor: 1.5,
       /** [combo needed, multiplier] (GAME_SPEC section 3). */
       tiers: [
         [0, 1],

@@ -113,6 +113,65 @@
 .dk-modes button b { color: var(--dk-typed); margin-right: 6px; }
 .dk-modes button span { display: block; font-size: 12px; color: #b89a70; margin-top: 3px; text-shadow: none; }
 
+/* Part F: wave clear banner line, results screen */
+.dk-banner small { display: block; font-size: 24px; letter-spacing: 2px; color: var(--dk-gold); margin-top: 6px; }
+.dk-panel.dk-results { width: 100%; max-width: 760px; }
+.dk-results h2 { margin: 18px 0 6px; font-size: 15px; letter-spacing: 0.14em; color: #b89a70; text-transform: uppercase; font-weight: 400; }
+.dk-results .dk-sub { margin: -6px 0 12px; color: #b89a70; }
+.dk-results .pb {
+  display: inline-block; padding: 0 5px; background: #ffe066; color: #1a0f06; font-weight: 700;
+  letter-spacing: 0.08em; text-shadow: none; font-size: 12px; line-height: 17px;
+}
+.dk-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.dk-tile {
+  display: flex; flex-direction: column; align-items: center; padding: 8px 6px 6px;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(106, 74, 42, 0.55);
+}
+.dk-tile .l { color: #b89a70; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+.dk-tile .v { color: #fff; font-size: 26px; line-height: 1.25; text-shadow: var(--dk-shadow); }
+.dk-tile.hero .v { font-size: 38px; color: var(--dk-typed); }
+.dk-tile .f { min-height: 18px; display: flex; gap: 6px; align-items: center; }
+.dk-tile .f small { color: #9a8468; font-size: 12px; }
+.dk-line { margin: 10px 0 0; color: #b89a70; font-size: 14px; }
+.dk-line b { color: #fff; font-weight: 400; }
+
+.dk-chart { display: block; width: 100%; height: auto; overflow: visible; }
+.dk-chart .grid { stroke: rgba(184, 154, 112, 0.14); stroke-width: 1; }
+.dk-chart .ax { fill: #9a8468; font: 11px var(--dk-font); }
+.dk-chart .avg { stroke: rgba(184, 154, 112, 0.5); stroke-width: 1; stroke-dasharray: 4 4; }
+.dk-chart .line { fill: none; stroke: var(--dk-typed); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.dk-chart .dot { fill: var(--dk-typed); stroke: rgb(22, 14, 8); stroke-width: 2; }
+.dk-chart .died .dot { fill: rgb(22, 14, 8); stroke: var(--dk-typed); }
+.dk-chart .hit { fill: transparent; }
+.dk-chart .pt:hover .dot { r: 6; }
+.dk-chart .val { fill: #fff; font: 12px var(--dk-font); }
+.dk-chart .val.small { font-size: 10px; }
+.dk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.dk-keys { --gap: 5px; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--gap); }
+.dk-keys .row { display: flex; gap: var(--gap); }
+.dk-keys .r1 { padding-left: 4.5%; }
+.dk-keys .r2 { padding-left: 13.5%; }
+.dk-keys .key {
+  --heat: 0%; flex: 0 0 calc((100% - 9 * var(--gap)) / 10); aspect-ratio: 1 / 0.95; box-sizing: border-box;
+  display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative;
+  background: color-mix(in oklab, rgb(46, 32, 20) calc(100% - var(--heat)), #e0452c var(--heat));
+  border: 1px solid rgba(0, 0, 0, 0.7); box-shadow: inset 0 0 0 1px rgba(184, 154, 112, 0.18);
+}
+.dk-keys .key b { position: absolute; left: 4px; top: 1px; font-size: 11px; font-weight: 400; color: #d8c0a0; text-transform: uppercase; }
+.dk-keys .key span { margin-top: 8px; font-size: clamp(10px, 2.4vw, 14px); color: #fff; text-shadow: 1px 1px 0 #000; }
+.dk-keys .key.none { background: transparent; border: 1px dashed rgba(184, 154, 112, 0.3); box-shadow: none; }
+.dk-keys .key.none span { color: #6f5d48; text-shadow: none; }
+.dk-heat-legend { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; font-size: 12px; color: #9a8468; }
+.dk-heat-legend i { width: 120px; height: 8px; background: linear-gradient(90deg, rgb(46, 32, 20), #e0452c); border: 1px solid rgba(0, 0, 0, 0.6); }
+
+.dk-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 18px; text-align: left; }
+.dk-cols h2 { text-align: left; }
+.dk-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.dk-chips li { padding: 2px 8px; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(106, 74, 42, 0.55); color: #fff; font-size: 14px; }
+.dk-chips li b { color: var(--dk-typed); text-transform: uppercase; font-weight: 400; margin-right: 4px; }
+.dk-chips li small { color: #9a8468; margin-left: 4px; }
+
 /* Part E: pause menu and settings (same panel and button look as the title screen) */
 .dk-hud.paused *, .dk-labels.paused * { animation-play-state: paused !important; }
 .dk-menu { display: flex; flex-direction: column; gap: 8px; align-items: stretch; margin: 14px auto 4px; max-width: 280px; }

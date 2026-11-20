@@ -82,7 +82,7 @@ describe('spawning', () => {
       for (const z of [...g.zombies]) if (z.z > -3) typeWord(g, z.word.slice(z.typed));
       if (g.over) break;
     }
-    expect(g.stats.kills).toBeGreaterThan(50);
+    expect(g.stats.kills + g.stats.spitsBroken).toBeGreaterThan(50); // words finished (blobs are not kills)
   });
 
   it('the spawn waits when no word with a free first letter exists', () => {
@@ -203,7 +203,7 @@ describe('typing', () => {
     expect(typo).toMatchObject({ expected: 'u', key: 'x' });
     typeWord(g, 'use');
     expect(g.zombies.length).toBe(0);
-    expect(g.stats.missedWords).toEqual(['house']);
+    expect(g.stats.typoWords).toEqual(['house']);
   });
 
   it('a key matching no zombie is a typo with no target', () => {
@@ -770,5 +770,94 @@ describe('enemy types (Part C)', () => {
     for (let i = 0; i < 40; i++) g.trySpawn();
     Object.assign(S, saved);
     expect(g.zombies.filter((z) => z.kind === 'bisk').length).toBe(1);
+  });
+});
+
+describe('score and stats (Part F)', () => {
+  /** Play wave 1 with perfect typing (plus `typos` stray keys early on) until it is cleared. */
+  function clearWave1(typos: number) {
+    const g = makeGame();
+    const events: GameEvent[] = [];
+    let strays = typos;
+    for (let i = 0; i < 120 * 60 && g.phase !== 'break'; i++) {
+      g.update(1 / 60);
+      for (const z of [...g.zombies]) {
+        if (!z.labelled || g.lockedId !== null) continue;
+        if (strays > 0) {
+          const used = new Set(g.zombies.map((o) => o.word[0]));
+          g.key([...'abcdefghijklmnopqrstuvwxyz'].find((c) => !used.has(c))!);
+          strays--;
+        }
+        typeWord(g, z.word);
+      }
+      events.push(...g.drainEvents());
+    }
+    return { g, cleared: events.find((e) => e.type === 'waveCleared') };
+  }
+
+  it('kills score by type, times the combo tier', () => {
+    const S = cfg.score;
+    expect(S.kill).toEqual({ walker: 100, runner: 150, bisk: 250, hunter: 400, blob: 75 });
+    const g = makeGame(['house'], ['abandoned']);
+    spawnEmerged(g);
+    g.combo = 12; // 2x tier, and stays there for the whole word (17 < 25)
+    typeWord(g, 'house');
+    expect(g.score).toBe(5 * S.perLetter * 2 + S.kill.walker * 2);
+    expect(g.stats.killsByKind.walker).toBe(1);
+  });
+
+  it('a hunter kill is worth 400 at 1x', () => {
+    const g = makeGame(['house'], ['abandoned']);
+    expect(g.trySpawn('hunter')).toBe(true);
+    const h = g.zombies[0];
+    h.labelled = true;
+    typeWord(g, h.word);
+    expect(g.score).toBe(h.word.length * cfg.score.perLetter + 400);
+    expect(g.stats.killsByKind.hunter).toBe(1);
+    expect(g.stats.kills).toBe(1);
+  });
+
+  it('wave clear bonus: 200 x wave, x1.5 with no typos, no combo multiplier', () => {
+    const clean = clearWave1(0);
+    expect(clean.cleared).toMatchObject({ wave: 1, bonus: 300, clean: true });
+    expect(clean.g.stats.waves[0]).toMatchObject({ wave: 1, bonus: 300, cleared: true, typos: 0 });
+    const dirty = clearWave1(1);
+    expect(dirty.cleared).toMatchObject({ wave: 1, bonus: 200, clean: false });
+    expect(dirty.g.stats.waves[0].typos).toBe(1);
+  });
+
+  it('per key: hits on the typed key, a locked miss on the expected letter, a stray miss on the key pressed', () => {
+    const g = makeGame(['house'], ['abandoned']);
+    spawnEmerged(g);
+    g.key('q'); // nothing starts with q
+    g.key('h');
+    g.key('x'); // expected o
+    typeWord(g, 'ouse');
+    expect(g.stats.keys.q).toEqual({ hits: 0, misses: 1 });
+    expect(g.stats.keys.o).toEqual({ hits: 1, misses: 1 });
+    expect(g.stats.keys.h).toEqual({ hits: 1, misses: 0 });
+    expect(g.stats.keys.x).toBeUndefined();
+  });
+
+  it('reaction time runs from the label appearing to the first letter', () => {
+    const g = makeGame(['house', 'zebra'], ['abandoned']);
+    spawnEmerged(g);
+    spawnEmerged(g);
+    const [a, b] = g.zombies;
+    a.labelledAt = 1;
+    b.labelledAt = 2;
+    g.time = 2.5;
+    typeWord(g, a.word); // 1.5 s
+    g.time = 3;
+    typeWord(g, b.word); // 1 s
+    expect(g.reactionAvg).toBeCloseTo(1.25, 9);
+    expect(g.stats.reactionBest).toBeCloseTo(1, 9);
+  });
+
+  it('per-wave typing numbers add up to the run totals', () => {
+    const { g } = clearWave1(0);
+    const w = g.stats.waves[0];
+    expect(w.typingCorrect).toBe(g.stats.typingCorrect);
+    expect(w.typingTime).toBeCloseTo(g.stats.typingTime, 9);
   });
 });
