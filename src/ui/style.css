@@ -1,0 +1,90 @@
+/* Plain M1 styling. Final menu look comes in M3. */
+
+/* Gamestation Text, SIL Open Font License (license next to the file). */
+@font-face {
+  font-family: 'DK Label';
+  src: url('/assets/fonts/GamestationText.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  --dk-text: #ffffff;
+  --dk-typed: #ff9a3c;
+  --dk-error: #ff3b30;
+  --dk-back: rgba(10, 6, 3, 0.74);
+  --dk-border: #6a4a2a;
+  --dk-gold: #f0c070;
+  --dk-font: 'DK Label', ui-monospace, Consolas, monospace;
+  /* hard black drop shadow, whole pixels, no blur */
+  --dk-shadow: 2px 2px 0 #000;
+}
+
+.dk-labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+
+/* Crisp text: whole-pixel size, spacing and padding, no blur on the shadow,
+   no subpixel positions (labels.ts rounds left/top). */
+.dk-label {
+  position: absolute; left: 0; top: 0; white-space: nowrap;
+  font: 400 var(--dk-label-size, 24px)/1 var(--dk-font); letter-spacing: 1px;
+  color: var(--dk-text); background: var(--dk-back);
+  padding: 4px 8px 5px; border: 1px solid rgba(255, 220, 170, 0.12); border-radius: 0;
+  text-shadow: var(--dk-shadow);
+  -webkit-font-smoothing: none; font-smooth: never; text-rendering: optimizeSpeed;
+  font-kerning: none; font-synthesis: none;
+  transform-origin: 50% 100%;
+}
+/* Appears fully sharp at the label distance: a tiny scale pop, no fade, no blur. */
+.dk-label.pop { animation: dk-pop var(--dk-pop-ms, 100ms) ease-out 1; }
+@keyframes dk-pop { from { transform: scale(var(--dk-pop-scale, 0.8)); } to { transform: scale(1); } }
+.dk-label.elite { border-color: rgba(255, 70, 40, 0.6); }
+.dk-label.locked {
+  border-color: var(--dk-typed); background: rgba(30, 14, 4, 0.9);
+  box-shadow: 0 0 0 1px rgba(255, 154, 60, 0.35), 0 0 12px rgba(255, 120, 30, 0.35);
+}
+.dk-label span.t { color: var(--dk-typed); }
+.dk-label span.err { color: var(--dk-error); animation: dk-err 0.28s steps(2) 1; }
+@keyframes dk-err { 0% { background: rgba(255, 59, 48, 0.45); } 100% { background: transparent; } }
+
+.dk-hud {
+  position: fixed; inset: 0; pointer-events: none; font: 400 22px/1 var(--dk-font); letter-spacing: 1px;
+  color: var(--dk-gold); text-shadow: var(--dk-shadow);
+  -webkit-font-smoothing: none; font-smooth: never; text-rendering: optimizeSpeed; font-synthesis: none;
+}
+.dk-hud > div { position: absolute; top: 14px; }
+.dk-hud-score { left: 16px; font-size: 26px; }
+.dk-hud-time { left: 0; right: 0; text-align: center; }
+.dk-hud-combo { right: 16px; }
+.dk-hud-combo .x { color: var(--dk-typed); }
+.dk-hud-combo.err { animation: dk-hud-err 0.35s 1; }
+.dk-hud-combo.up { animation: dk-hud-up 0.4s 1; }
+@keyframes dk-hud-err { 0%, 60% { color: var(--dk-error); transform: translateX(-3px); } 100% { color: var(--dk-gold); } }
+@keyframes dk-hud-up { 0% { transform: scale(1.35); color: #fff; } 100% { transform: scale(1); } }
+
+.dk-screen { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.35); padding: 16px; }
+.dk-panel {
+  min-width: min(420px, 100%); max-width: 520px; box-sizing: border-box; padding: 22px 26px;
+  background: rgba(22, 14, 8, 0.92); border: 1px solid var(--dk-border);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 0 0 3px rgba(106, 74, 42, 0.35);
+  color: var(--dk-text); font: 15px/1.5 var(--dk-font); text-align: center;
+}
+.dk-panel h1 { margin: 0 0 12px; color: var(--dk-typed); font-size: 34px; letter-spacing: 0.12em; }
+.dk-panel table { margin: 10px auto; border-collapse: collapse; text-align: left; }
+.dk-panel td { padding: 2px 12px; }
+.dk-panel td:first-child { color: #b89a70; }
+.dk-panel .dk-cta { color: var(--dk-gold); margin-top: 16px; }
+.dk-panel .dk-small { color: #9a8468; font-size: 12px; }
+.dk-panel .dk-best { color: #ffe066; font-weight: 700; letter-spacing: 0.2em; margin: 0; }
+
+.lil-gui.root { z-index: 3000; }
+
+.dk-panel .dk-wpm { margin: 4px 0 6px; color: #fff; font-size: 18px; text-shadow: var(--dk-shadow); }
+.dk-panel .dk-wpm span { font-size: 44px; color: var(--dk-typed); }
+
+/* F2 debug readout */
+.dk-readout {
+  position: fixed; left: 16px; top: 52px; margin: 0; padding: 8px 10px; z-index: 2500; pointer-events: none;
+  background: rgba(0, 0, 0, 0.72); border: 1px solid #3a2616; color: #d8f0c8;
+  font: 13px/1.45 ui-monospace, Consolas, monospace;
+}
