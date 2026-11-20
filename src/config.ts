@@ -188,7 +188,6 @@ export const CONFIG = {
       biskSpit: ['bisk_spit'],
       spitBreak: ['spit_break'],
       blinded: ['blinded'],
-      soundwave: ['soundwave'],
       waveStart: ['wave_start'],
       gameOver: ['game_over'],
       ambience: ['ambience'],

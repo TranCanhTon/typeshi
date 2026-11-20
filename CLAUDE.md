@@ -39,12 +39,12 @@ Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner,
   - Render width default is **800** (`look.render.width`); still a slider in the tuning panel and in Settings.
   - **Esc pauses** mid-run and Esc again resumes. Esc never reaches `game.key`, so it is never a typo. Paused = the logic is not stepped, so zombies, spawns, spit blobs, the blind timer and the wave timers all hold; views and labels update with dt 0; HUD and label CSS animations are paused. The typing clock runs on key event timestamps, so resume calls `Game.shiftKeyClock(pause length)`. Leaving the tab or window also pauses.
   - **Pause menu** in the panel style: Resume (Esc), Restart (R), Settings (S), Quit to main menu (Q). Settings: render width and master, effects and ambience volume sliders, Back (B). Saved in localStorage under `settings.storageKey` (`deadkeys.settings`).
-  - **Audio manager** (`src/audio/audio.ts`): named events mapped from game events, files listed in `CONFIG.audio.files`, looked for in `public/assets/sounds/` as .ogg, .mp3 or .wav. Missing files are silent. Starts on the first key press or click (browser rule). Gunshot picks one of 3 files with a random pitch (`audio.gunshotPitchJitter`), through the seeded RNG. The expected filenames are in `public/assets/sounds/README.md`. The `soundwave` sound is wired when the sound-wave blast is built.
+  - **Audio manager** (`src/audio/audio.ts`): named events mapped from game events, files listed in `CONFIG.audio.files`, looked for in `public/assets/sounds/` as .ogg, .mp3 or .wav. Missing files are silent. Starts on the first key press or click (browser rule). Gunshot picks one of 3 files with a random pitch (`audio.gunshotPitchJitter`), through the seeded RNG. The expected filenames are in `public/assets/sounds/README.md`.
 
 ## v2 decisions for later parts (answered before Part A)
 
 - **Spits vs lock-on**: strict lock. You finish your current word before you can type a blob's word.
-- **No grenade.** Instead a **sound-wave blast** that kills every enemy on screen (score: 25 per kill, no multiplier). Trigger and charge rules still to confirm (assume the spec's grenade rules: bar filled by clean streaks, Space when full).
+- **No grenade and no sound-wave blast, for now.** Ton first swapped the grenade for a sound wave that kills every enemy, then dropped it before Part F. So ignore the grenade parts of GAME_SPEC.md (Space, the mana bar, its HUD icon and score bonus). Space does nothing and is never a typo. Part F has no blast-kill score.
 
 ## Commands
 

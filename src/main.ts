@@ -323,7 +323,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (phase === 'playing' && game && e.key.length === 1) {
-    if (e.key === ' ') e.preventDefault(); // reserved for the grenade (M2)
+    if (e.key === ' ') e.preventDefault(); // stop the page scrolling; space is never part of a word
     // the key event's own timestamp, so typing time isn't rounded to frames or logic ticks
     if (!e.repeat) game.key(e.key, e.timeStamp / 1000);
   }

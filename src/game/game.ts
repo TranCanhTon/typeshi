@@ -252,7 +252,7 @@ export class Game {
   // -------------------------------------------------------------------------
 
   /**
-   * Feed one typed character. Anything other than a-z is ignored (space is the grenade, M2).
+   * Feed one typed character. Anything other than a-z is ignored (space does nothing: no grenade for now).
    * `at` is the keystroke time in seconds on any steady clock (the browser passes the
    * key event's timestamp, so typing time isn't rounded to logic ticks). Defaults to game time.
    */

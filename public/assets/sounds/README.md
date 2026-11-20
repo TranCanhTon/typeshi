@@ -14,7 +14,6 @@ Event names and files are set in `src/config.ts` under `audio.files`.
 | `bisk_spit` | Bisk lunges to spit |
 | `spit_break` | you break a spit blob by typing its word |
 | `blinded` | a spit blob hits you |
-| `soundwave` | the sound-wave blast that kills everything (the grenade's replacement; hooked up when it's built) |
 | `wave_start` | the "Wave N" banner appears |
 | `game_over` | you die |
 | `ambience` | loops all the time (wind, buzzing lamps, distant dog or siren) |
