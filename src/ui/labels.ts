@@ -118,6 +118,17 @@ export class WordLabels {
     this.layout(items, dt);
   }
 
+  private blind = -1;
+  /** Blinded by spit: blur and fade the labels too, but keep them faintly readable. */
+  setBlind(level: number): void {
+    const l = Math.round(level * 50) / 50;
+    if (l === this.blind) return;
+    this.blind = l;
+    const B = CONFIG.game.bisk.blind;
+    this.root.style.filter = l > 0 ? `blur(${(B.labelBlur * l).toFixed(2)}px)` : '';
+    this.root.style.opacity = l > 0 ? String(1 - B.labelFade * l) : '';
+  }
+
   clear(): void {
     for (const id of [...this.labels.keys()]) this.remove(id);
     this.order = [];

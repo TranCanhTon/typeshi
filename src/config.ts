@@ -281,6 +281,78 @@ export const CONFIG = {
       },
     },
 
+    /** Runner: the zombie dog. Fast, low, short words. */
+    runner: {
+      /** 1.8x the walker's 1.1 m/s. */
+      speed: 1.98,
+      slowFactor: 0.35,
+      slowTime: 0.3,
+      /** Its words are this many letters long (from the normal list). */
+      wordLength: [3, 4] as [number, number],
+      /** "Low poly zombie dog" by onmioji (CC BY 4.0). Swap the path to try another dog. */
+      model: '/assets/models/zombie_dog.glb',
+      /** Height at the shoulders (m). */
+      height: 0.85,
+      sizeJitter: 0.06,
+      tintJitter: 0.15,
+      /** Procedural gallop (no rig): strides per second at base speed, bob (m), body rock (rad). */
+      gallop: { strideRate: 2.4, bob: 0.07, rock: 0.14, sway: 0.04 },
+      /** Death: flops onto its side over this many seconds. */
+      deathTime: 0.45,
+    },
+
+    /**
+     * Bisk, the spitter (Bisk by Rahi_IV, CC BY 4.0, simplified and toned down
+     * into bisk_lod.glb by `npm run simplify:bisk`). Shuffles to a stop point
+     * partway down the main alley and stays there, spitting until killed.
+     */
+    bisk: {
+      /** Shuffle speed (m/s). */
+      speed: 0.55,
+      slowFactor: 0.5,
+      slowTime: 0.3,
+      /** Where it stops: this far from the player (m). Keep it inside labelDistance. */
+      stopDistance: 11,
+      /** Bisks alive at once. */
+      maxAlive: 1,
+      model: '/assets/models/bisk_lod.glb',
+      height: 1.95,
+      sizeJitter: 0.04,
+      /** Shuffle: steps per second, sway (rad), bob (m). */
+      shuffle: { stepRate: 1.6, sway: 0.06, bob: 0.03 },
+      spit: {
+        /** First spit this long after its word appears (s)... */
+        firstDelay: 2,
+        /** ...then every this many seconds (+/- jitter) while it lives. */
+        interval: 4.5,
+        intervalJitter: 1,
+        /** Lunge wind-up before the blob leaves (s). */
+        windup: 0.4,
+        /** Lunge: scale up and lean forward (rad). */
+        lungeScale: 0.15,
+        lungeLean: 0.35,
+        /** Blob words are this many letters long. */
+        wordLength: [3, 4] as [number, number],
+        /** Seconds for the blob to reach you. */
+        travelTime: 1.5,
+        /** Height the blob leaves from, and arrives at (m). */
+        launchHeight: 1.7,
+        arriveHeight: 1.55,
+      },
+      /** A blob that reaches you blinds you for `time` seconds, fading back over the last `fade`. */
+      blind: {
+        time: 2,
+        fade: 0.5,
+        /** Blur radius at full strength (low res pixels), how much darker, and a green tint. */
+        blur: 5,
+        dim: 0.55,
+        tint: 0.18,
+        /** Labels at full strength: blur (px), and how much they fade (still faintly readable). */
+        labelBlur: 2.5,
+        labelFade: 0.5,
+      },
+    },
+
     /** The Blind Hunter elite: big, slow, one long hard word. */
     hunter: {
       speed: 0.7,

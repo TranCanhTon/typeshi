@@ -7,9 +7,12 @@ import { buildPath, STREETS, type Street, type StreetLayout } from './layout';
 import type { Rng } from './rng';
 import { mixWeights, waveParams, type WaveParams } from './waves';
 
-export type ZombieKind = 'walker' | 'hunter';
-/** The enemy types the game can spawn today (the wave mix also names runner and bisk, Part C). */
-export const SPAWNABLE: readonly ZombieKind[] = ['walker', 'hunter'];
+/** Enemy types the waves spawn. */
+export type EnemyKind = 'walker' | 'runner' | 'bisk' | 'hunter';
+/** Everything with a word: enemies plus Bisk's spit blobs. */
+export type ZombieKind = EnemyKind | 'blob';
+/** The enemy types the wave mix can pick from. */
+export const SPAWNABLE: readonly EnemyKind[] = ['walker', 'runner', 'bisk', 'hunter'];
 
 /** Waves mode ends after the last wave; endless goes on forever. */
 export type Mode = 'waves' | 'endless';
@@ -54,6 +57,17 @@ export interface Zombie {
   labelled: boolean;
   /** Game time when it got its label (for reaction time stats later). */
   labelledAt: number;
+  /** Bisk: game time of its next spit (set once its word appears). */
+  spitAt?: number;
+  /** Bisk: seconds left in the lunge before the blob leaves (undefined when not lunging). */
+  windup?: number;
+  /** Bisk: the word its next blob will carry (picked when the lunge starts). */
+  blobWord?: string;
+  /** Bisk: id of its blob in flight. Blob: id of the Bisk that spat it. */
+  linkId?: number;
+  /** Blob: where it left from, and how far along its flight it is (0..1). */
+  from?: { x: number; z: number };
+  flight?: number;
 }
 
 export type GameEvent =
@@ -63,6 +77,10 @@ export type GameEvent =
   | { type: 'kill'; id: number; kind: ZombieKind; points: number }
   | { type: 'typo'; id: number | null; key: string; expected: string | null }
   | { type: 'comboTier'; multiplier: number }
+  /** A Bisk starts its lunge (the blob follows after the wind-up). */
+  | { type: 'lunge'; id: number }
+  /** A blob reached you: blinded. */
+  | { type: 'blinded'; id: number; time: number }
   | { type: 'waveStart'; wave: number }
   | { type: 'waveCleared'; wave: number }
   | { type: 'win'; wave: number }
@@ -75,6 +93,9 @@ export interface RunStats {
   hunterKills: number;
   bestCombo: number;
   wavesCleared: number;
+  /** Blobs broken by typing their word, and blobs that hit. */
+  spitsBroken: number;
+  timesBlinded: number;
   /** Every correct key, including the keys that lock on. */
   correctKeys: number;
   /** Every wrong key (locked or not). */
@@ -119,8 +140,11 @@ export class Game {
   phaseTime = 0;
   /** Zombies spawned so far in the current wave. */
   waveSpawned = 0;
+  /** Seconds of blindness left (a blob hit you). */
+  blindLeft = 0;
   readonly stats: RunStats = {
-    time: 0, score: 0, kills: 0, hunterKills: 0, bestCombo: 0, wavesCleared: 0, correctKeys: 0, typos: 0,
+    time: 0, score: 0, kills: 0, hunterKills: 0, bestCombo: 0, wavesCleared: 0, spitsBroken: 0, timesBlinded: 0,
+    correctKeys: 0, typos: 0,
     typingTime: 0, typingCorrect: 0, typingKeys: 0, wordsTyped: 0, missedWords: [],
   };
   private events: GameEvent[] = [];
@@ -155,6 +179,20 @@ export class Game {
     let m = 1;
     for (const [combo, mult] of this.cfg.score.tiers) if (this.combo >= combo) m = mult;
     return m;
+  }
+
+  /** How blinded you are right now: 1 = full, fading to 0 over the last `blind.fade` seconds. */
+  get blindLevel(): number {
+    const B = this.cfg.bisk.blind;
+    if (this.blindLeft <= 0) return 0;
+    return Math.min(1, this.blindLeft / Math.max(0.001, B.fade));
+  }
+
+  /** Enemies alive (blobs in flight don't count toward wave limits). */
+  get enemiesAlive(): number {
+    let n = 0;
+    for (const z of this.zombies) if (z.kind !== 'blob') n++;
+    return n;
   }
 
   get locked(): Zombie | null {
@@ -265,8 +303,7 @@ export class Game {
     this.stats.bestCombo = Math.max(this.stats.bestCombo, this.combo);
     if (this.multiplier > tierBefore) this.events.push({ type: 'comboTier', multiplier: this.multiplier });
     this.score += this.cfg.score.perLetter * this.multiplier;
-    const k = z.kind === 'hunter' ? this.cfg.hunter : this.cfg.walker;
-    z.slowTimer = k.slowTime;
+    z.slowTimer = this.kindCfg(z.kind).slowTime;
     this.events.push({ type: 'shot', id: z.id, index: z.typed - 1 });
     if (z.typed >= z.word.length) {
       this.endSpan(at);
@@ -281,6 +318,7 @@ export class Game {
     this.score += points;
     this.stats.kills++;
     if (z.kind === 'hunter') this.stats.hunterKills++;
+    if (z.kind === 'blob') this.stats.spitsBroken++;
     this.zombies.splice(this.zombies.indexOf(z), 1);
     if (this.lockedId === z.id) this.lockedId = null;
     this.events.push({ type: 'kill', id: z.id, kind: z.kind, points });
@@ -300,8 +338,12 @@ export class Game {
   update(dt: number): void {
     if (this.over) return;
     this.time += dt;
+    this.blindLeft = Math.max(0, this.blindLeft - dt);
     this.updateWave(dt);
     this.moveZombies(dt);
+    if (this.over) return;
+    this.updateBisks(dt);
+    this.updateBlobs(dt);
     this.stats.time = this.time;
     this.stats.score = this.score;
   }
@@ -351,7 +393,7 @@ export class Game {
       if (this.waveSpawned < P.size) {
         this.spawnTimer -= dt;
         // If no lane has room or no word has a free first letter, the spawn just waits.
-        if (this.spawnTimer <= 0 && this.zombies.length < P.maxAlive && this.trySpawn()) {
+        if (this.spawnTimer <= 0 && this.enemiesAlive < P.maxAlive && this.trySpawn()) {
           this.waveSpawned++;
           this.spawnTimer = P.interval;
         }
@@ -379,7 +421,7 @@ export class Game {
    * Spawn one zombie now, in a street picked by spawn weight (or `forceStreet`).
    * Returns false if no street has room or no word has a free first letter.
    */
-  trySpawn(forceKind?: ZombieKind, forceStreet?: Street): boolean {
+  trySpawn(forceKind?: EnemyKind, forceStreet?: Street): boolean {
     const kind = forceKind ?? this.rollKind();
     // Spacing first: try the streets in weighted random order until one has room.
     let spot: { street: Street; lateral: number; laneX: number } | null = null;
@@ -393,21 +435,24 @@ export class Game {
     const word =
       kind === 'hunter'
         ? this.picker.pick(this.lists.hard, { usedFirstLetters: used })
-        : this.picker.pick(this.lists.normal, {
+        : kind === 'runner'
+          ? this.picker.pick(this.wordsOfLength(this.cfg.runner.wordLength), { usedFirstLetters: used })
+          : this.picker.pick(this.lists.normal, {
             usedFirstLetters: used,
             maxDifficulty: w.difficultyStart + w.difficultyPerWave * (this.wave - 1),
           });
     if (!word) return false;
 
     const S = this.cfg.streets;
-    const k = kind === 'hunter' ? this.cfg.hunter : this.cfg.walker;
+    const k = this.kindCfg(kind);
     const [d0, d1] = spot.street === 'straight' ? S.spawnDepthStraight : S.spawnDepthSide;
     const { start, waypoints } = buildPath(this.layout, {
       street: spot.street,
       depth: this.rng.range(d0, d1),
       lateral: spot.lateral,
       laneX: spot.laneX,
-      endZ: this.cfg.killZ + 0.5,
+      // Bisk stops partway down the main alley; everything else walks past the kill line
+      endZ: kind === 'bisk' ? this.cfg.playerZ - this.cfg.bisk.stopDistance : this.cfg.killZ + 0.5,
       turnPoints: S.turnPoints,
     });
     const z: Zombie = {
@@ -432,6 +477,118 @@ export class Game {
     this.zombies.push(z);
     this.events.push({ type: 'spawn', zombie: z });
     return true;
+  }
+
+  /** Speed and slow-on-hit settings for a type. */
+  private kindCfg(kind: ZombieKind): { speed: number; slowFactor: number; slowTime: number } {
+    switch (kind) {
+      case 'hunter':
+        return this.cfg.hunter;
+      case 'runner':
+        return this.cfg.runner;
+      case 'bisk':
+        return this.cfg.bisk;
+      default:
+        return this.cfg.walker;
+    }
+  }
+
+  private shortLists = new Map<string, readonly string[]>();
+  /** Normal words of a length range (runner and blob words). */
+  private wordsOfLength([lo, hi]: [number, number]): readonly string[] {
+    const key = lo + '-' + hi;
+    let l = this.shortLists.get(key);
+    if (!l) {
+      l = this.lists.normal.filter((w) => w.length >= lo && w.length <= hi);
+      this.shortLists.set(key, l);
+    }
+    return l;
+  }
+
+  // --- Bisk and its blobs ---------------------------------------------------
+  // About `spit.firstDelay` s after a Bisk's word appears it lunges, and after the
+  // wind-up a glowing blob with its own short word flies at you, arriving after
+  // `spit.travelTime` s. Type the word to break it; if it lands you're blinded.
+  // The Bisk spits again every `spit.interval` s (one blob in flight at a time)
+  // until it is killed. Lock-on stays strict: finish your word before the blob's.
+
+  private updateBisks(dt: number): void {
+    const S = this.cfg.bisk.spit;
+    for (const b of [...this.zombies]) {
+      if (b.kind !== 'bisk' || !b.labelled) continue;
+      if (b.spitAt === undefined) b.spitAt = b.labelledAt + S.firstDelay;
+      if (b.windup !== undefined) {
+        b.windup -= dt;
+        if (b.windup <= 0) {
+          b.windup = undefined;
+          const ok = b.blobWord !== undefined && this.spawnBlob(b, b.blobWord);
+          b.blobWord = undefined;
+          b.spitAt = this.time + (ok ? S.interval + this.rng.range(-S.intervalJitter, S.intervalJitter) : 0.5);
+        }
+      } else if (this.time >= b.spitAt && !this.zombies.some((o) => o.kind === 'blob' && o.linkId === b.id)) {
+        // pick the blob's word now, so the lunge only happens when a blob can follow
+        const used = new Set(this.zombies.map((z) => z.word[0]));
+        const word = this.picker.pick(this.wordsOfLength(S.wordLength), { usedFirstLetters: used });
+        if (!word) {
+          b.spitAt = this.time + 0.5;
+          continue;
+        }
+        b.blobWord = word;
+        b.windup = S.windup;
+        this.events.push({ type: 'lunge', id: b.id });
+      }
+    }
+  }
+
+  private spawnBlob(b: Zombie, word: string): boolean {
+    if (this.zombies.some((z) => z.word[0] === word[0])) return false; // first letters stay unique
+    const blob: Zombie = {
+      id: this.nextId++,
+      kind: 'blob',
+      word,
+      typed: 0,
+      x: b.x,
+      z: b.z + 0.3,
+      path: [],
+      baseSpeed: 0,
+      speed: 0,
+      slowTimer: 0,
+      street: b.street,
+      lateral: 0,
+      laneX: b.x,
+      travelled: Infinity, // never counts toward street spacing
+      emerged: false,
+      labelled: true, // labelled the moment it leaves
+      labelledAt: this.time,
+      linkId: b.id,
+      from: { x: b.x, z: b.z + 0.3 },
+      flight: 0,
+    };
+    this.zombies.push(blob);
+    b.linkId = blob.id;
+    this.events.push({ type: 'spawn', zombie: blob });
+    return true;
+  }
+
+  private updateBlobs(dt: number): void {
+    const S = this.cfg.bisk.spit;
+    for (const blob of [...this.zombies]) {
+      if (blob.kind !== 'blob' || !blob.from) continue;
+      blob.flight = Math.min(1, (blob.flight ?? 0) + dt / S.travelTime);
+      const t = blob.flight;
+      blob.x = blob.from.x * (1 - t);
+      blob.z = blob.from.z + (this.cfg.playerZ - blob.from.z) * t;
+      if (t < 1) continue;
+      // it hit: blinded
+      this.zombies.splice(this.zombies.indexOf(blob), 1);
+      if (this.lockedId === blob.id) {
+        this.lockedId = null;
+        this.endSpan(this.lastKeyAt);
+      }
+      this.blindLeft = this.cfg.bisk.blind.time;
+      this.stats.timesBlinded++;
+      this.events.push({ type: 'blinded', id: blob.id, time: this.cfg.bisk.blind.time });
+    }
   }
 
   private spacingScale(kind: ZombieKind): number {
@@ -488,7 +645,7 @@ export class Game {
       street === 'left' ? [allLo, allLo + 0.45 * w] : street === 'right' ? [allHi - 0.45 * w, allHi] : [allLo + 0.3 * w, allHi - 0.3 * w];
     const m = this.cfg.streets.wallMargin;
     const sameStreet = this.zombies
-      .filter((o) => o.street === street && o.travelled < S.depth * this.spacingScale(o.kind))
+      .filter((o) => o.kind !== 'blob' && o.street === street && o.travelled < S.depth * this.spacingScale(o.kind))
       .map((o) => ({ at: street === 'straight' ? o.laneX : o.lateral, need: S.side * scale(o) }));
     const [lo, hi] = street === 'straight' ? [laneLo, laneHi] : [L.crossFar + m, L.crossNear - m];
     const lateral = this.openSpot(lo, hi, sameStreet);
@@ -496,17 +653,18 @@ export class Game {
     if (street === 'straight') return { street, lateral, laneX: lateral };
     // main alley lane: clear of everyone near the crossing, if possible
     const nearCrossing = this.zombies
-      .filter((o) => o.z > L.crossFar - 3 && o.z < L.crossNear + S.depth * 2)
+      .filter((o) => o.kind !== 'blob' && o.z > L.crossFar - 3 && o.z < L.crossNear + S.depth * 2)
       .map((o) => ({ at: o.laneX, need: S.side * scale(o) }));
     const laneX = this.openSpot(laneLo, laneHi, nearCrossing) ?? this.rng.range(laneLo, laneHi);
     return { street, lateral, laneX };
   }
 
-  /** Pick a type from the wave mix (types that exist yet, hunters capped per wave). */
-  private rollKind(): ZombieKind {
+  /** Pick a type from the wave mix (hunters and bisks capped). */
+  private rollKind(): EnemyKind {
     const weights = mixWeights(this.cfg.waves, this.wave, SPAWNABLE);
-    const hunters = this.zombies.filter((z) => z.kind === 'hunter').length;
-    if (hunters >= this.params.hunterMax) weights.delete('hunter');
+    const count = (k: ZombieKind): number => this.zombies.filter((z) => z.kind === k).length;
+    if (count('hunter') >= this.params.hunterMax) weights.delete('hunter');
+    if (count('bisk') >= this.cfg.bisk.maxAlive) weights.delete('bisk');
     let total = 0;
     for (const w of weights.values()) total += w;
     if (total <= 0) return 'walker';
@@ -575,7 +733,7 @@ export class Game {
     const mine = rem.get(z)!;
     let cap = Infinity;
     for (const o of this.zombies) {
-      if (o === z) continue;
+      if (o === z || o.kind === 'blob') continue;
       const theirs = rem.get(o)!;
       if (theirs > mine || (theirs === mine && o.id > z.id)) continue;
       const gap = this.gapAhead(z, o);
@@ -587,13 +745,16 @@ export class Game {
   }
 
   private moveZombies(dt: number): void {
-    // furthest along first, so followers see this tick's leader speeds
-    const rem = new Map(this.zombies.map((z) => [z, this.remaining(z)]));
-    const order = [...this.zombies].sort((a, b) => rem.get(a)! - rem.get(b)!);
+    // furthest along first, so followers see this tick's leader speeds (blobs fly on their own)
+    const walkers = this.zombies.filter((z) => z.kind !== 'blob');
+    const rem = new Map(walkers.map((z) => [z, this.remaining(z)]));
+    const order = [...walkers].sort((a, b) => rem.get(a)! - rem.get(b)!);
     for (const z of order) {
-      const k = z.kind === 'hunter' ? this.cfg.hunter : this.cfg.walker;
+      const k = this.kindCfg(z.kind);
       z.slowTimer = Math.max(0, z.slowTimer - dt);
       z.speed = Math.min(z.baseSpeed * (z.slowTimer > 0 ? k.slowFactor : 1), this.followCap(z, rem));
+      // standing at the end of its path (Bisk at its stop point)
+      if (rem.get(z)! < 1e-6) z.speed = 0;
 
       let step = z.speed * dt;
       z.travelled += step;
@@ -625,7 +786,7 @@ export class Game {
 
     this.separate(dt);
 
-    const reached = this.zombies.find((z) => z.z >= this.cfg.killZ);
+    const reached = this.zombies.find((z) => z.kind !== 'blob' && z.z >= this.cfg.killZ);
     if (reached) {
       this.endSpan(this.lastKeyAt); // a word cut short still counts up to its last key
       this.over = true;

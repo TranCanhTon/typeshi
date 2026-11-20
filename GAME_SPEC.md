@@ -242,6 +242,10 @@ Reference screenshots go in `docs/refs/`. Look at them before building anything 
 
 | `public/assets/models/zombie_blind_hunter.glb` | Zombie Bind Hunter | KIFIR (sketchfab.com/kifir) | CC BY NC 4.0, credit required, **non commercial only** | **No rig, no animations**, 5.5k triangles, three 1024px textures. Look test only (M0). Don't use it in the real game unless Ton rigs it. |
 
+| `public/assets/models/bisk_lod.glb` (from `bisk.glb`) | Bisk | Rahi_IV (sketchfab.com/Rahi_IV) | CC BY 4.0, **credit required**, credited as modified | **The spitter (v2).** No rig, no textures. Built by `npm run simplify:bisk` (scripts/simplify-bisk.mjs): 113,740 -> ~5,500 tris with meshoptimizer, and toned down at Ton's request (chest flattened, exposed chest covered by the jacket's black material, chest ring removed, jacket pushed out over the skin). |
+
+| `public/assets/models/zombie_dog.glb` | Low poly zombie dog | onmioji (sketchfab.com/onmioji) | CC BY 4.0, **credit required** | **The runner (v2).** No rig, no animations (procedural gallop), 1.2k tris, one texture. Path in `game.runner.model`. |
+
 | `public/assets/fonts/GamestationText.otf` | Gamestation Text | Derivative of Play by Jonas Hecksher (fontspace.com) | SIL OFL 1.1 | Word labels and HUD. License in `GamestationText-OFL.txt`; keep it next to the font. |
 
 Using the zombie:

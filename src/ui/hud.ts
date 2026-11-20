@@ -109,7 +109,9 @@ export class Screens {
           <button type="button" data-mode="endless"><b>2</b> Endless<span>waves until you fall</span></button>
         </div>
         <p class="dk-small">Press <b>1</b> or <b>ENTER</b> for Waves, <b>2</b> for Endless &middot; <b>\`</b> toggles the tuning panel</p>
-        <p class="dk-small">Credits: "Free Zombies" (Polyart Zombies pack) by Denys Almaral &middot;
+        <p class="dk-small">Credits: Polyart Zombies pack ("Free Zombies") by Denys Almaral &middot;
+        "Bisk" by Rahi_IV (CC BY 4.0, simplified and modified) &middot;
+        "Low poly zombie dog" by onmioji (CC BY 4.0) &middot;
         "Zombie Blind Hunter" by KIFIR (CC BY-NC 4.0) &middot;
         Gamestation Text font (SIL OFL 1.1, based on Play by Jonas Hecksher)</p>
       </div>`;

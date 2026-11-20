@@ -586,3 +586,173 @@ describe('crossroads', () => {
     expect(a.startZ - a.mainFarZ).toBeCloseTo(70, 6);
   });
 });
+
+describe('enemy types (Part C)', () => {
+  /** Put a just-spawned zombie in the main alley, labelled, walking straight at you. */
+  function place(g: Game, x: number, z: number) {
+    const zb = g.zombies[g.zombies.length - 1];
+    Object.assign(zb, { x, z, laneX: x, emerged: true, labelled: true, labelledAt: g.time });
+    return zb;
+  }
+  /** No wave spawns: hold the game in a break that never ends. */
+  const stopSpawns = (g: Game) => {
+    g.phase = 'break';
+    g.phaseTime = -1e9;
+  };
+
+  it('runners are 1.8x walker speed and carry 3-4 letter words', () => {
+    for (let i = 0; i < 30; i++) {
+      const g = makeGame(ENGLISH_200, HARD_WORDS, 500 + i);
+      expect(g.trySpawn('runner')).toBe(true);
+      const r = g.zombies[0];
+      expect(r.word.length).toBeGreaterThanOrEqual(3);
+      expect(r.word.length).toBeLessThanOrEqual(4);
+      expect(r.baseSpeed / cfg.walker.speed).toBeCloseTo(1.8, 6);
+    }
+  });
+
+  it('Bisk walks to its stop point partway down the alley and stays there', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = g.zombies[0];
+    for (let i = 0; i < 60 * 60; i++) {
+      g.update(1 / 60);
+      for (const z of [...g.zombies]) if (z.kind === 'blob' && g.lockedId === null) typeWord(g, z.word);
+    }
+    expect(g.over).toBe(false);
+    expect(b.z).toBeCloseTo(cfg.playerZ - cfg.bisk.stopDistance, 3);
+    expect(b.speed).toBe(0);
+  });
+
+  it('Bisk lunges ~2 s after its word appears, then a labelled blob flies at you and blinds you', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    const events: GameEvent[] = [];
+    let lungeAt = -1;
+    let blobAt = -1;
+    for (let i = 0; i < 60 * 6 && g.stats.timesBlinded === 0; i++) {
+      g.update(1 / 60);
+      for (const e of g.drainEvents()) {
+        events.push(e);
+        if (e.type === 'lunge' && lungeAt < 0) lungeAt = g.time;
+        if (e.type === 'spawn' && e.zombie.kind === 'blob' && blobAt < 0) blobAt = g.time;
+      }
+    }
+    expect(lungeAt - b.labelledAt).toBeCloseTo(cfg.bisk.spit.firstDelay, 1);
+    expect(blobAt - lungeAt).toBeCloseTo(cfg.bisk.spit.windup, 1);
+    const hit = events.find((e) => e.type === 'blinded');
+    expect(hit).toBeDefined();
+    expect(g.time - blobAt).toBeCloseTo(cfg.bisk.spit.travelTime, 1);
+    expect(g.blindLevel).toBe(1);
+    expect(g.over).toBe(false); // a blob never counts as reaching you
+    // blind fades back over the last 0.5 s
+    for (let i = 0; i < Math.round((cfg.bisk.blind.time - 0.25) * 60); i++) g.update(1 / 60);
+    expect(g.blindLevel).toBeGreaterThan(0.3);
+    expect(g.blindLevel).toBeLessThan(0.7);
+    for (let i = 0; i < 30; i++) g.update(1 / 60);
+    expect(g.blindLevel).toBe(0);
+  });
+
+  it('typing the blob word breaks it; the blob has a unique first letter and short word', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    let blob = null as null | (typeof g.zombies)[number];
+    for (let i = 0; i < 60 * 4 && !blob; i++) {
+      g.update(1 / 60);
+      blob = g.zombies.find((z) => z.kind === 'blob') ?? null;
+    }
+    expect(blob).not.toBeNull();
+    expect(blob!.labelled).toBe(true);
+    expect(blob!.word.length).toBeLessThanOrEqual(4);
+    expect(blob!.word[0]).not.toBe(b.word[0]);
+    typeWord(g, blob!.word);
+    expect(g.zombies.find((z) => z.kind === 'blob')).toBeUndefined();
+    expect(g.stats.spitsBroken).toBe(1);
+    for (let i = 0; i < 60 * 3; i++) g.update(1 / 60);
+    expect(g.stats.timesBlinded).toBe(0);
+  });
+
+  it('strict lock: mid-word on another zombie, the blob cannot be typed', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    g.trySpawn('walker');
+    const w = place(g, 1, -12);
+    w.word.length; // a word of at least 2 letters
+    g.key(w.word[0]);
+    let blob = null as null | (typeof g.zombies)[number];
+    for (let i = 0; i < 60 * 4 && !blob; i++) {
+      g.update(1 / 60);
+      blob = g.zombies.find((z) => z.kind === 'blob') ?? null;
+    }
+    g.key(blob!.word[0]);
+    expect(g.lockedId).toBe(w.id);
+  });
+
+  it('Bisk keeps spitting while alive and stops once killed', () => {
+    const g = makeGame();
+    stopSpawns(g);
+    g.trySpawn('bisk', 'straight');
+    const b = place(g, 0, -8);
+    b.path = [{ x: 0, z: -8 }];
+    let lunges = 0;
+    for (let i = 0; i < 60 * 14; i++) {
+      g.update(1 / 60);
+      for (const e of g.drainEvents()) if (e.type === 'lunge') lunges++;
+      for (const z of [...g.zombies]) if (z.kind === 'blob' && g.lockedId === null) typeWord(g, z.word);
+    }
+    expect(lunges).toBeGreaterThanOrEqual(2);
+    typeWord(g, b.word.slice(b.typed));
+    expect(g.zombies.some((z) => z.kind === 'bisk')).toBe(false);
+    let after = 0;
+    for (let i = 0; i < 60 * 10; i++) {
+      g.update(1 / 60);
+      for (const e of g.drainEvents()) if (e.type === 'lunge') after++;
+    }
+    expect(after).toBe(0);
+  });
+
+  it('blobs do not count toward max alive, and a wave is not cleared while one is in flight', () => {
+    const g = makeGame();
+    g.trySpawn('bisk', 'straight');
+    place(g, 0, -8).path = [{ x: 0, z: -8 }];
+    for (let i = 0; i < 60 * 4 && !g.zombies.some((z) => z.kind === 'blob'); i++) g.update(1 / 60);
+    expect(g.zombies.length).toBe(2);
+    expect(g.enemiesAlive).toBe(1);
+  });
+
+  it('wave mix brings runners from wave 3 and Bisk from wave 4, one Bisk at a time', () => {
+    const kindsAt = (wave: number, n: number) => {
+      const out: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const g = makeGame(ENGLISH_200, HARD_WORDS, 700 + i);
+        g.wave = wave;
+        g.trySpawn();
+        out.push(g.zombies[0].kind);
+      }
+      return out;
+    };
+    expect(kindsAt(3, 120)).toContain('runner');
+    expect(kindsAt(3, 120)).not.toContain('bisk');
+    expect(kindsAt(4, 300)).toContain('bisk');
+    const g = makeGame();
+    g.wave = 8;
+    g.trySpawn('bisk');
+    const S = cfg.spacing;
+    const saved = { ...S };
+    S.side = 0;
+    S.depth = 0;
+    for (let i = 0; i < 40; i++) g.trySpawn();
+    Object.assign(S, saved);
+    expect(g.zombies.filter((z) => z.kind === 'bisk').length).toBe(1);
+  });
+});

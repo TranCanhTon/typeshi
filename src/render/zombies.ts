@@ -5,6 +5,12 @@
 //    skeletons. Each spawn picks a random zombie and one of four walk styles
 //    at a random speed. The pack has no hit or death animations, so the hit
 //    is a procedural lean back and the death a stagger and topple backward.
+//  * runner: low_poly_zombie_dog.glb (no rig): a procedural gallop (bob,
+//    rock, sway), flinch on hit, flops onto its side on death.
+//  * bisk: bisk_lod.glb (no rig): shuffles to its stop point, a scripted
+//    lunge (scale up, lean in) before each spit, topples backward on death.
+//  * blob: Bisk's spit, a glowing green ball that arcs at the camera. Bursts
+//    when its word is typed; vanishes into the screen when it hits.
 //  * hunter: zombie_blind_hunter.glb (no rig): a procedural lurch (sway,
 //    bob, lean), a shudder and knock back on hit, topples backward on death.
 
@@ -15,8 +21,11 @@ import {
   Box3,
   CanvasTexture,
   Color,
+  AdditiveBlending,
   Group,
+  IcosahedronGeometry,
   LoadingManager,
+  MeshBasicMaterial,
   type Material,
   Mesh,
   MeshLambertMaterial,
@@ -60,11 +69,20 @@ interface WalkClip {
   groundSpeed: number;
 }
 
+/** A static model centred on its footprint (the dog's origin is at its head). */
+interface CenteredTemplate extends Template {
+  /** Model-space centre of the footprint, to offset so it turns about its middle. */
+  cx: number;
+  cz: number;
+}
+
 export interface ZombieAssets {
   walkers: WalkerVariant[];
   /** Walk styles per skeleton type. */
   walks: Record<Skeleton, WalkClip[]>;
   hunter: Template;
+  runner: CenteredTemplate;
+  bisk: Template;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +136,18 @@ function normalise(scene: Object3D, height: number): { baseScale: number; baseY:
   return { baseScale, baseY: -box.min.y * baseScale };
 }
 
+function centered(scene: Object3D, height: number): CenteredTemplate {
+  scene.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(scene);
+  return {
+    scene,
+    clips: [],
+    ...normalise(scene, height),
+    cx: (box.min.x + box.max.x) / 2,
+    cz: (box.min.z + box.max.z) / 2,
+  };
+}
+
 /** Keep only tracks that point at bones this rig actually has (no "no target node" warnings). */
 function fitClip(clip: AnimationClip, rig: Object3D): AnimationClip {
   const names = new Set<string>();
@@ -135,7 +165,7 @@ export async function loadZombieAssets(): Promise<ZombieAssets> {
   const loader = new GLTFLoader(manager);
   const skeletonOf = (name: string): Skeleton => (name.startsWith('ZombieFemale') ? 'Female' : 'Male');
 
-  const [rigs, walkFiles, h] = await Promise.all([
+  const [rigs, walkFiles, h, dog, bisk] = await Promise.all([
     Promise.all(M.variants.map((v) => loader.loadAsync(`${M.base}rig-gltf_joined/${v}_joined.gltf`))),
     Promise.all(
       (['Female', 'Male'] as Skeleton[]).flatMap((sk) =>
@@ -147,6 +177,8 @@ export async function loadZombieAssets(): Promise<ZombieAssets> {
       ),
     ),
     loader.loadAsync('/assets/models/zombie_blind_hunter.glb'),
+    loader.loadAsync(G.runner.model),
+    loader.loadAsync(G.bisk.model),
   ]);
 
   const walkers: WalkerVariant[] = rigs.map((r, i) => {
@@ -160,10 +192,14 @@ export async function loadZombieAssets(): Promise<ZombieAssets> {
     walks[w.sk].push({ clip: fitClip(w.clip, rig), groundSpeed: w.groundSpeed });
   }
   convertMaterials(h.scene);
+  convertMaterials(dog.scene);
+  convertMaterials(bisk.scene);
   return {
     walkers,
     walks,
     hunter: { scene: h.scene, clips: [], ...normalise(h.scene, G.hunter.height) },
+    runner: centered(dog.scene, G.runner.height),
+    bisk: { scene: bisk.scene, clips: [], ...normalise(bisk.scene, G.bisk.height) },
   };
 }
 
@@ -250,6 +286,193 @@ abstract class ZombieView {
 
   abstract update(z: Zombie | null, dt: number): void;
   abstract hit(): void;
+  /** Bisk only: start the spit lunge. */
+  lunge(): void {}
+  /** Blob only: it hit you, gone at once. */
+  splat(): void {
+    this.dead = true;
+  }
+}
+
+const ease = (t: number): number => t * t * (3 - 2 * t);
+
+class RunnerView extends ZombieView {
+  private pivot = new Group();
+  private phase: number;
+  private flinch = 0;
+  private speedRatio = 1;
+
+  constructor(z: Zombie, t: CenteredTemplate, rng: Rng) {
+    const R = G.runner;
+    const size = 1 + rng.range(-R.sizeJitter, R.sizeJitter);
+    super(z, R.height * size);
+    const model = t.scene.clone(true);
+    const k = t.baseScale * size;
+    model.scale.multiplyScalar(k);
+    model.position.set(-t.cx * k, t.baseY * size, -t.cz * k);
+    tint(model, rng, R.tintJitter);
+    this.pivot.add(model);
+    this.root.add(this.pivot);
+    this.phase = rng.range(0, Math.PI * 2);
+  }
+
+  hit(): void {
+    if (!this.dying) this.flinch = 1;
+  }
+
+  update(z: Zombie | null, dt: number): void {
+    const R = G.runner;
+    if (z && !this.dying) {
+      this.follow(z, dt);
+      this.speedRatio = z.speed / R.speed;
+    }
+    if (!this.dying) {
+      // gallop: a bound per stride, the body rocking nose-down and up
+      const r = Math.min(1.2, this.speedRatio);
+      this.phase += dt * Math.PI * 2 * R.gallop.strideRate * Math.max(0.15, r);
+      this.flinch = Math.max(0, this.flinch - dt * 4);
+      this.pivot.position.y = Math.abs(Math.sin(this.phase)) * R.gallop.bob * r;
+      this.pivot.rotation.x = Math.sin(this.phase) * R.gallop.rock * r - this.flinch * 0.3;
+      this.pivot.rotation.z = Math.cos(this.phase * 0.5) * R.gallop.sway * r;
+      this.pivot.position.z = -this.flinch * 0.15;
+    } else {
+      // flop onto its side
+      const t = ease(Math.min(1, this.deathTime / R.deathTime));
+      this.pivot.rotation.z = (Math.PI / 2) * t;
+      this.pivot.rotation.x *= 0.85;
+      this.pivot.position.y = Math.max(0, this.pivot.position.y - dt);
+      this.updateCorpse(dt);
+    }
+  }
+
+  labelAnchor(out: Vector3): Vector3 {
+    return out.set(this.root.position.x, this.height + 0.35, this.root.position.z);
+  }
+}
+
+class BiskView extends ZombieView {
+  private pivot = new Group();
+  private phase: number;
+  private shudder = 0;
+  private speedRatio = 1;
+  /** Seconds since the lunge started (-1 = not lunging). */
+  private lungeT = -1;
+  private rng: Rng;
+
+  constructor(z: Zombie, t: Template, rng: Rng) {
+    const B = G.bisk;
+    const size = 1 + rng.range(-B.sizeJitter, B.sizeJitter);
+    super(z, B.height * size);
+    this.rng = rng;
+    const model = t.scene.clone(true);
+    model.scale.multiplyScalar(t.baseScale * size);
+    model.position.y = t.baseY * size;
+    this.pivot.add(model);
+    this.root.add(this.pivot);
+    this.phase = rng.range(0, Math.PI * 2);
+  }
+
+  hit(): void {
+    if (!this.dying) this.shudder = 1;
+  }
+
+  lunge(): void {
+    if (!this.dying) this.lungeT = 0;
+  }
+
+  update(z: Zombie | null, dt: number): void {
+    const B = G.bisk;
+    const S = B.spit;
+    if (z && !this.dying) {
+      this.follow(z, dt);
+      this.speedRatio = z.speed / B.speed;
+    }
+    if (!this.dying) {
+      const r = Math.min(1, this.speedRatio);
+      // shuffle while moving; a slow menacing sway when standing
+      this.phase += dt * Math.PI * (B.shuffle.stepRate * Math.max(0.35, r));
+      this.shudder = Math.max(0, this.shudder - dt * 4);
+      let lean = 0;
+      let grow = 0;
+      if (this.lungeT >= 0) {
+        this.lungeT += dt;
+        const back = 0.35;
+        const k = this.lungeT < S.windup ? ease(this.lungeT / S.windup) : 1 - Math.min(1, (this.lungeT - S.windup) / back);
+        lean = S.lungeLean * k;
+        grow = S.lungeScale * k;
+        if (this.lungeT > S.windup + back) this.lungeT = -1;
+      }
+      const jitter = (this.rng.next() - 0.5) * this.shudder * 0.08;
+      this.pivot.rotation.z = Math.sin(this.phase) * B.shuffle.sway * (0.4 + 0.6 * r) + jitter;
+      this.pivot.rotation.x = lean - this.shudder * 0.12;
+      this.pivot.position.y = Math.abs(Math.sin(this.phase)) * B.shuffle.bob * r;
+      this.pivot.scale.setScalar(1 + grow);
+    } else {
+      const t = Math.min(1, this.deathTime / 0.9);
+      this.pivot.rotation.x = (-Math.PI / 2) * t * t;
+      this.pivot.rotation.z *= 0.9;
+      this.pivot.scale.setScalar(1);
+      this.updateCorpse(dt);
+    }
+  }
+}
+
+const BLOB_CORE = new IcosahedronGeometry(0.15, 0);
+const BLOB_SHELL = new IcosahedronGeometry(0.27, 1);
+
+class BlobView extends ZombieView {
+  private core: Mesh;
+  private shell: Mesh;
+  private burst = -1;
+  private spin = 0;
+
+  constructor(z: Zombie) {
+    super(z, 0.3);
+    this.core = new Mesh(BLOB_CORE, ps1ify(new MeshBasicMaterial({ color: 0x9dff4a })));
+    this.shell = new Mesh(
+      BLOB_SHELL,
+      ps1ify(new MeshBasicMaterial({ color: 0x3aff18, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false })),
+    );
+    this.root.add(this.core, this.shell);
+    this.place(z);
+  }
+
+  private place(z: Zombie): void {
+    const S = G.bisk.spit;
+    const t = z.flight ?? 0;
+    const y = S.launchHeight + (S.arriveHeight - S.launchHeight) * t + Math.sin(Math.PI * t) * 0.35;
+    this.root.position.set(z.x, y, z.z);
+  }
+
+  hit(): void {
+    this.shell.scale.setScalar(1.35);
+  }
+
+  die(): void {
+    // broken: a quick green burst
+    this.dying = true;
+    this.burst = 0;
+  }
+
+  update(z: Zombie | null, dt: number): void {
+    this.spin += dt * 9;
+    this.core.rotation.set(this.spin, this.spin * 0.7, 0);
+    this.shell.rotation.set(-this.spin * 0.5, this.spin, 0);
+    this.shell.scale.setScalar(Math.max(1, this.shell.scale.x - dt * 3) * (1 + Math.sin(this.spin * 1.7) * 0.06));
+    if (z && !this.dying) this.place(z);
+    if (this.burst >= 0) {
+      this.burst += dt;
+      const k = this.burst / 0.2;
+      this.root.scale.setScalar(1 + k * 2.5);
+      (this.shell.material as MeshBasicMaterial).opacity = 0.35 * (1 - k);
+      this.core.visible = false;
+      if (k >= 1) this.dead = true;
+    }
+  }
+
+  labelAnchor(out: Vector3): Vector3 {
+    return out.set(this.root.position.x, this.root.position.y + 0.3, this.root.position.z);
+  }
 }
 
 class WalkerView extends ZombieView {
@@ -396,14 +619,17 @@ export class ZombieRenderer {
   onEvent(e: GameEvent): void {
     switch (e.type) {
       case 'spawn': {
-        const v =
-          e.zombie.kind === 'hunter'
-            ? new HunterView(e.zombie, this.assets.hunter, this.rng)
-            : new WalkerView(e.zombie, this.assets, this.rng);
+        const v = this.makeView(e.zombie);
         this.views.set(e.zombie.id, v);
         this.group.add(v.root);
         break;
       }
+      case 'lunge':
+        this.views.get(e.id)?.lunge();
+        break;
+      case 'blinded':
+        this.views.get(e.id)?.splat();
+        break;
       case 'shot':
         this.views.get(e.id)?.hit();
         break;
@@ -424,6 +650,21 @@ export class ZombieRenderer {
     }
   }
 
+  private makeView(z: Zombie): ZombieView {
+    switch (z.kind) {
+      case 'hunter':
+        return new HunterView(z, this.assets.hunter, this.rng);
+      case 'runner':
+        return new RunnerView(z, this.assets.runner, this.rng);
+      case 'bisk':
+        return new BiskView(z, this.assets.bisk, this.rng);
+      case 'blob':
+        return new BlobView(z);
+      default:
+        return new WalkerView(z, this.assets, this.rng);
+    }
+  }
+
   labelAnchor(id: number, out: Vector3): Vector3 | null {
     const v = this.views.get(id);
     return v ? v.labelAnchor(out) : null;
@@ -439,14 +680,11 @@ export class ZombieRenderer {
    * first hunter each freeze the game for a moment while their shaders build.
    */
   warmup(compile: () => void): void {
-    const fake = (kind: 'walker' | 'hunter'): Zombie => ({
+    const fake = (kind: Zombie['kind']): Zombie => ({
       id: -1, kind, word: 'x', typed: 0, x: 0, z: -6, path: [], baseSpeed: 1, speed: 1,
       slowTimer: 0, street: 'straight', lateral: 0, laneX: 0, travelled: 0, emerged: false, labelled: false, labelledAt: 0,
     });
-    const views = [
-      new WalkerView(fake('walker'), this.assets, this.rng),
-      new HunterView(fake('hunter'), this.assets.hunter, this.rng),
-    ];
+    const views = (['walker', 'hunter', 'runner', 'bisk', 'blob'] as const).map((k) => this.makeView(fake(k)));
     for (const v of views) this.group.add(v.root);
     compile();
     for (const v of views) this.group.remove(v.root);

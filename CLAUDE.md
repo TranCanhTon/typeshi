@@ -4,7 +4,7 @@ The full spec is in GAME_SPEC.md. Read it before doing anything, and follow sect
 
 Current work: **Version 2, parts A to F** (Ton's v2 brief), built in order on branch `feat/v2`. After each part: commit (conventional commits, no co-author line), update this file, tell Ton how to test, and stop until he says go.
 
-Done: **Part A** (Free Zombies walkers), **Part B** (waves).
+Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs).
 
 ## Decisions Ton has made so far
 
@@ -21,13 +21,17 @@ Done: **Part A** (Free Zombies walkers), **Part B** (waves).
 
 - **Waves everywhere (Part B).** Zombies only come in waves, in both modes: "Wave N" banner (`waves.introTime`, 2.5 s), the wave spawns, it's cleared when all of it is spawned and dead, then a break (`waves.breakTime`, 3 s). **Waves mode** = 20 waves then the win screen; **Endless** = the same formula forever. The title screen picks the mode (1/Enter = Waves, 2 = Endless); results have Play again (Enter) and Main menu (M).
   - The wave formula (`game.waves`, `src/game/waves.ts`) is the **only spawn source**. Ton removed the adaptive spawner (`game.adaptive`) because it spawned far too many zombies, and the time-based `game.endless` ramp. Wave 1: 5 zombies, one every 2.5 s, max 3 alive; each wave +2 zombies, interval x0.93 (floor 0.8 s), max alive +1 every 2 waves (cap 8), walk speed x1.04 (cap x1.8); word difficulty rises per wave (`words.difficultyPerWave`).
-  - Enemy mix is data (`waves.mix`): walkers from wave 1, runners from 3, Bisk from 4, Blind Hunter from 6, Bisk a bit more common than the Hunter. Max 1 Hunter alive, 2 from wave 13. Runner and Bisk don't exist until Part C, so for now only walkers and hunters spawn (`SPAWNABLE` in game.ts).
+  - Enemy mix is data (`waves.mix`): walkers from wave 1, runners from 3, Bisk from 4, Blind Hunter from 6, Bisk a bit more common than the Hunter. Max 1 Hunter alive, 2 from wave 13 (`SPAWNABLE` in game.ts lists the types the mix can pick).
   - Unique first letters and the street/lane spacing are unchanged. HUD top centre shows "Wave N" ("Wave N / 20" in waves mode). F2 readout shows the wave state.
+
+- **Enemy types (Part C).** Four enemies plus spit blobs (`EnemyKind`, `ZombieKind` in game.ts):
+  - **Runner** = `zombie_dog.glb` ("Low poly zombie dog", onmioji, CC BY 4.0; path in `game.runner.model`). 1.8x walker speed, 3-4 letter words, procedural gallop (no rig), flops onto its side on death.
+  - **Bisk** = `bisk_lod.glb`, built from Rahi_IV's `bisk.glb` by `npm run simplify:bisk` (113,740 -> ~5,500 tris). **Toned down at Ton's request**: chest flattened, the exposed chest covered with the jacket's black material, the chest ring removed. Shuffles to `bisk.stopDistance` (11 m) down the main alley and stays. ~2 s after its word appears it lunges (scale + lean) and spits a glowing green blob, then again every ~4.5 s while alive (one blob in flight at a time). Max 1 Bisk alive.
+  - **Blob**: its own 3-4 letter word, unique first letter, labelled at once; reaches you in 1.5 s. Typed = broken. Hit = **blinded** for 2 s (heavy blur, dim, green tint on the world; blur and fade on the labels, still readable), fading back over the last 0.5 s. Typing still works. Blobs don't count toward max alive or the kill line, but a wave isn't cleared while one is in flight.
+  - The "fiona - super star kartz" file Ton sent is **not used** (Shrek/DreamWorks character ripped from a licensed game).
 
 ## v2 decisions for later parts (answered before Part A)
 
-- **Runner (Part C)** uses `low_poly_zombie_dog.glb` (onmioji, CC BY 4.0) from the start, with a procedural gallop (no rig). Model path in config.
-- **Spitter (Part C)**: Ton asked for the "fiona - super star kartz (reupload)" model instead of Rahi_IV's Bisk. Claude declined: it's Princess Fiona from Shrek ripped from a licensed game (DreamWorks IP; a reupload's CC BY tag doesn't make it licensable; spec rule 8). Still open: placeholder spitter or another model. Ask before Part C.
 - **Spits vs lock-on**: strict lock. You finish your current word before you can type a blob's word.
 - **No grenade.** Instead a **sound-wave blast** that kills every enemy on screen (score: 25 per kill, no multiplier). Trigger and charge rules still to confirm (assume the spec's grenade rules: bar filled by clean streaks, Space when full).
 

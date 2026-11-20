@@ -281,6 +281,12 @@ function tick(dt: number): void {
     readout.update(game, performance.now() / 1000);
   }
 
+  // Bisk's spit: blur and dim the world and the labels (still faintly readable)
+  const blind = game && phase === 'playing' ? game.blindLevel : 0;
+  const BL = CONFIG.game.bisk.blind;
+  post.setBlind(blind, BL.blur, BL.dim, BL.tint);
+  labels.setBlind(blind);
+
   if (game && zombies) {
     zombies.update(game, dt);
     if (phase === 'playing') {
