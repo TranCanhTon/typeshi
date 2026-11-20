@@ -236,7 +236,9 @@ Reference screenshots go in `docs/refs/`. Look at them before building anything 
 
 | File | What | Author | License | Notes |
 |---|---|---|---|---|
-| `public/assets/models/zombie_rinono.glb` | ANIMATION ZOMBIE | RINONO (sketchfab.com/Jguyfioy) | CC BY 4.0, **credit required** | Rigged, 64 bones, 4.6k triangles, one 1024px texture. Clips: `walk01`, `walk02`, `run`, `damage`, `death`, `idle01`, `idle02`, `attack01`, `attack02`, `caution`, `down`, `eat`, `on_all_four_A`, `on_all_four_B`, `on_all_four_eat`, `Default Take` |
+| `public/assets/models/freezombies/` | Free Zombies (Polyart Zombies with Animations Free Pack) | Denys Almaral (sketchfab.com/denysalmaral, FAB) | FAB / Sketchfab Standard, credit given | **Walkers since v2.** 10 rigged zombies (`rig-gltf_joined/`, accessories joined into the mesh) on two skeletons, female and male. Animations per skeleton in `animations-gltf/`: walk, slowWalk, walk_agressive, walk_limp, running, idle, idle2, idle_alert, attack_left, attack_right. **No hit or death clips** (both are procedural). One texture, `Textures/zcolors.png`. |
+
+| ~~`public/assets/models/zombie_rinono.glb`~~ | ANIMATION ZOMBIE | RINONO | CC BY 4.0 | **Removed in v2** (replaced by Free Zombies). No longer loaded or credited. |
 
 | `public/assets/models/zombie_blind_hunter.glb` | Zombie Bind Hunter | KIFIR (sketchfab.com/kifir) | CC BY NC 4.0, credit required, **non commercial only** | **No rig, no animations**, 5.5k triangles, three 1024px textures. Look test only (M0). Don't use it in the real game unless Ton rigs it. |
 

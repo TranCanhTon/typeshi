@@ -73,7 +73,7 @@ export class Screens {
         Big ones carry long words. Don't let anything reach you.</p>
         <p class="dk-cta">Press <b>ENTER</b> to start</p>
         <p class="dk-small">Endless mode &middot; English 200 &middot; <b>\`</b> toggles the look panel</p>
-        <p class="dk-small">Credits: "ANIMATION ZOMBIE" by RINONO (CC BY 4.0) &middot;
+        <p class="dk-small">Credits: "Free Zombies" (Polyart Zombies pack) by Denys Almaral &middot;
         "Zombie Blind Hunter" by KIFIR (CC BY-NC 4.0) &middot;
         Gamestation Text font (SIL OFL 1.1, based on Play by Jonas Hecksher)</p>
       </div>`;

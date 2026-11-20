@@ -1,8 +1,10 @@
 // Zombie visuals. Reads positions from the game state each frame and reacts
 // to game events; never changes game state itself.
 //
-//  * walker: zombie_rinono.glb (rigged): walk01/walk02 at random speeds,
-//    `damage` blended in on each hit, `death` on kill.
+//  * walker: Free Zombies pack (Denys Almaral): ten rigged zombies on two
+//    skeletons. Each spawn picks a random zombie and one of four walk styles
+//    at a random speed. The pack has no hit or death animations, so the hit
+//    is a procedural lean back and the death a stagger and topple backward.
 //  * hunter: zombie_blind_hunter.glb (no rig): a procedural lurch (sway,
 //    bob, lean), a shudder and knock back on hit, topples backward on death.
 
@@ -14,7 +16,7 @@ import {
   CanvasTexture,
   Color,
   Group,
-  LoopOnce,
+  LoadingManager,
   type Material,
   Mesh,
   MeshLambertMaterial,
@@ -45,8 +47,23 @@ interface Template {
   baseY: number;
 }
 
+type Skeleton = 'Female' | 'Male';
+
+interface WalkerVariant extends Template {
+  name: string;
+  skeleton: Skeleton;
+}
+
+interface WalkClip {
+  clip: AnimationClip;
+  /** Ground speed (m/s) the feet match at timeScale 1. */
+  groundSpeed: number;
+}
+
 export interface ZombieAssets {
-  walker: Template;
+  walkers: WalkerVariant[];
+  /** Walk styles per skeleton type. */
+  walks: Record<Skeleton, WalkClip[]>;
   hunter: Template;
 }
 
@@ -101,16 +118,51 @@ function normalise(scene: Object3D, height: number): { baseScale: number; baseY:
   return { baseScale, baseY: -box.min.y * baseScale };
 }
 
+/** Keep only tracks that point at bones this rig actually has (no "no target node" warnings). */
+function fitClip(clip: AnimationClip, rig: Object3D): AnimationClip {
+  const names = new Set<string>();
+  rig.traverse((o) => names.add(o.name));
+  const out = clip.clone();
+  out.tracks = out.tracks.filter((t) => names.has(t.name.slice(0, t.name.lastIndexOf('.'))));
+  return out;
+}
+
 export async function loadZombieAssets(): Promise<ZombieAssets> {
-  const loader = new GLTFLoader();
-  const [w, h] = await Promise.all([
-    loader.loadAsync('/assets/models/zombie_rinono.glb'),
+  const M = G.walker.model;
+  // The rigs ask for "zcolors.png" next to themselves; it's in the Textures folder.
+  const manager = new LoadingManager();
+  manager.setURLModifier((url) => (url.endsWith('/zcolors.png') ? M.base + M.texture : url));
+  const loader = new GLTFLoader(manager);
+  const skeletonOf = (name: string): Skeleton => (name.startsWith('ZombieFemale') ? 'Female' : 'Male');
+
+  const [rigs, walkFiles, h] = await Promise.all([
+    Promise.all(M.variants.map((v) => loader.loadAsync(`${M.base}rig-gltf_joined/${v}_joined.gltf`))),
+    Promise.all(
+      (['Female', 'Male'] as Skeleton[]).flatMap((sk) =>
+        M.walks.map(async (w) => ({
+          sk,
+          groundSpeed: w.groundSpeed,
+          clip: (await loader.loadAsync(`${M.base}animations-gltf/gltf_Zombie${sk}/Zombie${sk}@${w.file}.gltf`)).animations[0],
+        })),
+      ),
+    ),
     loader.loadAsync('/assets/models/zombie_blind_hunter.glb'),
   ]);
-  convertMaterials(w.scene);
+
+  const walkers: WalkerVariant[] = rigs.map((r, i) => {
+    convertMaterials(r.scene);
+    return { name: M.variants[i], skeleton: skeletonOf(M.variants[i]), scene: r.scene, clips: [], ...normalise(r.scene, G.walker.height) };
+  });
+  // fit each walk clip to its skeleton type once (all rigs of a type share bone names)
+  const walks: Record<Skeleton, WalkClip[]> = { Female: [], Male: [] };
+  for (const w of walkFiles) {
+    const rig = walkers.find((v) => v.skeleton === w.sk)!.scene;
+    walks[w.sk].push({ clip: fitClip(w.clip, rig), groundSpeed: w.groundSpeed });
+  }
   convertMaterials(h.scene);
   return {
-    walker: { scene: w.scene, clips: w.animations, ...normalise(w.scene, G.walker.height) },
+    walkers,
+    walks,
     hunter: { scene: h.scene, clips: [], ...normalise(h.scene, G.hunter.height) },
   };
 }
@@ -201,72 +253,73 @@ abstract class ZombieView {
 }
 
 class WalkerView extends ZombieView {
+  /** Pivot at the feet for the hit lean and the death topple. */
+  private pivot = new Group();
   private mixer: AnimationMixer;
   private walk: AnimationAction;
-  private damage: AnimationAction | null;
-  private death: AnimationAction | null;
+  private groundSpeed: number;
   private animRate: number;
-  private damageTimer = 0;
+  private flinch = 0;
+  private shakeSeed = 0;
+  private rng: Rng;
 
-  constructor(z: Zombie, t: Template, rng: Rng) {
-    const size = 1 + rng.range(-G.walker.sizeJitter, G.walker.sizeJitter);
-    super(z, G.walker.height * size);
+  /** Which of the ten zombies this is (for debugging). */
+  readonly variant: string;
+
+  constructor(z: Zombie, assets: ZombieAssets, rng: Rng) {
+    const W = G.walker;
+    const size = 1 + rng.range(-W.sizeJitter, W.sizeJitter);
+    super(z, W.height * size);
+    this.rng = rng;
+    const t = rng.pick(assets.walkers);
+    this.variant = t.name;
     const model = cloneSkinned(t.scene);
     model.scale.multiplyScalar(t.baseScale * size);
     model.position.y = t.baseY * size;
-    tint(model, rng, G.walker.tintJitter);
-    this.root.add(model);
+    tint(model, rng, W.tintJitter);
+    this.pivot.add(model);
+    this.root.add(this.pivot);
 
     this.mixer = new AnimationMixer(model);
-    const clip = (name: string): AnimationClip | undefined => t.clips.find((c) => c.name === name);
-    const walkClip = clip(rng.chance(0.5) ? 'walk01' : 'walk02') ?? clip('walk01') ?? t.clips[0];
-    this.walk = this.mixer.clipAction(walkClip);
-    this.walk.time = rng.range(0, walkClip.duration); // out of sync with the others
+    const style = rng.pick(assets.walks[t.skeleton]);
+    this.groundSpeed = style.groundSpeed;
+    this.walk = this.mixer.clipAction(style.clip);
+    this.walk.time = rng.range(0, style.clip.duration); // out of sync with the others
     this.walk.play();
-    this.animRate = 1 + rng.range(-G.walker.animJitter, G.walker.animJitter);
-
-    const dmg = clip('damage');
-    this.damage = dmg ? this.mixer.clipAction(dmg) : null;
-    if (this.damage) {
-      this.damage.setLoop(LoopOnce, 1);
-    }
-    const dth = clip('death');
-    this.death = dth ? this.mixer.clipAction(dth) : null;
-    if (this.death) {
-      this.death.setLoop(LoopOnce, 1);
-      this.death.clampWhenFinished = true;
-    }
+    this.animRate = 1 + rng.range(-W.animJitter, W.animJitter);
   }
 
   hit(): void {
-    if (!this.damage || this.dying) return;
-    // a short flinch: blend the start of the damage clip over the walk
-    this.damage.reset().setEffectiveWeight(1).fadeIn(0.05).play();
-    this.damageTimer = 0.32;
-  }
-
-  die(): void {
-    super.die();
-    this.damage?.fadeOut(0.1);
-    if (this.death) {
-      this.death.reset().play();
-      this.walk.crossFadeTo(this.death, 0.15, false);
-    } else {
-      this.walk.stop();
-    }
+    if (this.dying) return;
+    this.flinch = 1;
+    this.shakeSeed = this.rng.range(-1, 1);
   }
 
   update(z: Zombie | null, dt: number): void {
+    const W = G.walker;
     if (z && !this.dying) {
       this.follow(z, dt);
       // match the walk cycle to the actual speed (slows show up as a stagger)
-      this.walk.timeScale = (z.speed / G.walker.animSpeed) * this.animRate;
+      const [lo, hi] = W.model.timeScaleRange;
+      this.walk.timeScale = Math.min(hi, Math.max(lo, z.speed / this.groundSpeed)) * this.animRate;
     }
-    if (this.damageTimer > 0) {
-      this.damageTimer -= dt;
-      if (this.damageTimer <= 0) this.damage?.fadeOut(0.2);
+    if (!this.dying) {
+      // hit: lean back and get knocked back a little, easing out
+      this.flinch = Math.max(0, this.flinch - dt / W.hit.time);
+      const f = this.flinch * this.flinch;
+      this.pivot.rotation.x = -W.hit.lean * f;
+      this.pivot.rotation.z = W.hit.shake * f * this.shakeSeed;
+      this.pivot.position.z = -W.hit.knock * f;
+    } else {
+      // death: the walk winds down, a small stagger, then a topple backward
+      this.walk.timeScale = Math.max(0, this.walk.timeScale - (dt / W.death.freezeTime) * Math.max(1, this.walk.timeScale));
+      const t = Math.min(1, this.deathTime / W.death.toppleTime);
+      const ease = t * t * (3 - 2 * t);
+      this.pivot.rotation.x = -(Math.PI / 2) * ease;
+      this.pivot.rotation.z = Math.sin(t * Math.PI) * 0.12 * (this.shakeSeed || 1);
+      this.pivot.position.z = -0.25 * ease;
+      this.updateCorpse(dt);
     }
-    if (this.dying) this.updateCorpse(dt);
     this.mixer.update(dt);
   }
 }
@@ -346,7 +399,7 @@ export class ZombieRenderer {
         const v =
           e.zombie.kind === 'hunter'
             ? new HunterView(e.zombie, this.assets.hunter, this.rng)
-            : new WalkerView(e.zombie, this.assets.walker, this.rng);
+            : new WalkerView(e.zombie, this.assets, this.rng);
         this.views.set(e.zombie.id, v);
         this.group.add(v.root);
         break;
@@ -391,7 +444,7 @@ export class ZombieRenderer {
       slowTimer: 0, street: 'straight', lateral: 0, laneX: 0, travelled: 0, emerged: false, labelled: false, labelledAt: 0,
     });
     const views = [
-      new WalkerView(fake('walker'), this.assets.walker, this.rng),
+      new WalkerView(fake('walker'), this.assets, this.rng),
       new HunterView(fake('hunter'), this.assets.hunter, this.rng),
     ];
     for (const v of views) this.group.add(v.root);

@@ -232,12 +232,53 @@ export const CONFIG = {
       height: 1.75,
       /** Random size variation (+/- fraction). */
       sizeJitter: 0.08,
-      /** Walk animation speed (m/s) at timeScale 1, so feet roughly match the ground. */
-      animSpeed: 1.0,
       /** Random walk animation speed variation (+/- fraction). */
       animJitter: 0.15,
       /** Random tint variation (+/- fraction per channel). */
       tintJitter: 0.18,
+
+      /**
+       * Free Zombies pack by Denys Almaral (FAB). Ten rigged zombies on two
+       * skeletons (female / male); animations are separate files per skeleton.
+       * Each spawn picks a random zombie and a random walk style.
+       */
+      model: {
+        base: '/assets/models/freezombies/',
+        /** The rigs reference this texture by bare name; it lives in Textures/. */
+        texture: 'Textures/zcolors.png',
+        /** rig-gltf_joined/<name>_joined.gltf. The prefix says which skeleton it uses. */
+        variants: [
+          'ZombieFemale_A', 'ZombieFemale_B', 'ZombieFemale_C', 'ZombieFemale_D', 'ZombieFemale_E',
+          'ZombieMale_A', 'ZombieMale_B', 'ZombieMale_C', 'ZombieMale_D', 'ZombieMale_E',
+        ],
+        /**
+         * Walk styles: animation file suffix, and the ground speed (m/s) the feet
+         * match at normal playback, so the cycle is sped up or slowed to fit the
+         * zombie's actual speed. The clips walk in place; the game moves the body.
+         */
+        walks: [
+          { file: 'walk_64f', groundSpeed: 0.65 },
+          { file: 'slowWalk_85f', groundSpeed: 0.45 },
+          { file: 'walk_agressive_64f', groundSpeed: 0.75 },
+          { file: 'walk_limp_60f', groundSpeed: 0.5 },
+        ],
+        /** Keep playback within this range so very fast or slow walkers don't look silly. */
+        timeScaleRange: [0.6, 2.2] as [number, number],
+      },
+      /** The pack has no hit or death animations, so both are procedural. */
+      hit: {
+        /** Lean back (rad) and knock back (m) on each hit, easing out over `time` seconds. */
+        lean: 0.22,
+        knock: 0.1,
+        shake: 0.05,
+        time: 0.3,
+      },
+      death: {
+        /** Stagger, then topple backward over this many seconds. */
+        toppleTime: 0.85,
+        /** The walk cycle slows to a stop over this many seconds. */
+        freezeTime: 0.2,
+      },
     },
 
     /** The Blind Hunter elite: big, slow, one long hard word. */
