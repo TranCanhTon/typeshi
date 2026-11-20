@@ -4,7 +4,7 @@ The full spec is in GAME_SPEC.md. Read it before doing anything, and follow sect
 
 Current work: **Version 2, parts A to F** (Ton's v2 brief), built in order on branch `feat/v2`. After each part: commit (conventional commits, no co-author line), update this file, tell Ton how to test, and stop until he says go.
 
-Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs), **Part D** (which word is which zombie).
+Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner, Bisk, blobs), **Part D** (which word is which zombie), **Part E** (pause, settings, audio).
 
 ## Decisions Ton has made so far
 
@@ -34,6 +34,12 @@ Done: **Part A** (Free Zombies walkers), **Part B** (waves), **Part C** (runner,
   - **Every label has a stem** from its bottom centre to its own zombie's head (the dog's head is at the front of its body), angled when stacked. This brings back the line Ton removed in v1, now on every label (`labels.stemWidth`, `labels.stemColor`).
   - **The locked zombie gets an outline** in the lock colour (`labels.lockColor`, same as the locked label), an inverted-hull shell `labels.lockOutline` m thick, built the first time it's locked.
   - **Type markers** before the word: none for walkers, yellow square = runner, green square = Bisk, green dot = blob, red square = Hunter (`labels.markers`).
+
+- **Pause, settings, audio (Part E).**
+  - Render width default is **800** (`look.render.width`); still a slider in the tuning panel and in Settings.
+  - **Esc pauses** mid-run and Esc again resumes. Esc never reaches `game.key`, so it is never a typo. Paused = the logic is not stepped, so zombies, spawns, spit blobs, the blind timer and the wave timers all hold; views and labels update with dt 0; HUD and label CSS animations are paused. The typing clock runs on key event timestamps, so resume calls `Game.shiftKeyClock(pause length)`. Leaving the tab or window also pauses.
+  - **Pause menu** in the panel style: Resume (Esc), Restart (R), Settings (S), Quit to main menu (Q). Settings: render width and master, effects and ambience volume sliders, Back (B). Saved in localStorage under `settings.storageKey` (`deadkeys.settings`).
+  - **Audio manager** (`src/audio/audio.ts`): named events mapped from game events, files listed in `CONFIG.audio.files`, looked for in `public/assets/sounds/` as .ogg, .mp3 or .wav. Missing files are silent. Starts on the first key press or click (browser rule). Gunshot picks one of 3 files with a random pitch (`audio.gunshotPitchJitter`), through the seeded RNG. The expected filenames are in `public/assets/sounds/README.md`. The `soundwave` sound is wired when the sound-wave blast is built.
 
 ## v2 decisions for later parts (answered before Part A)
 

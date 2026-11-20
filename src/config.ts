@@ -16,8 +16,12 @@ export const CONFIG = {
   // ---------------------------------------------------------------------------
   look: {
     render: {
-      /** Internal render width in pixels. Height follows the window aspect (480 -> 270 at 16:9). */
-      width: 480,
+      /**
+       * Internal render width in pixels; height follows the window aspect (800 -> 450 at 16:9).
+       * v2: up from 480 so characters, props and labels read cleaner. Wall textures stay
+       * crunchy because they are 64 px with nearest filtering.
+       */
+      width: 800,
     },
     ps1: {
       /** 0 = no dithering, 1 = one full color step of ordered (Bayer 4x4) noise. */
@@ -150,6 +154,45 @@ export const CONFIG = {
     bags: 4,
     puddles: 7,
     stains: 10,
+  },
+
+  /**
+   * Sound (src/audio/audio.ts). Every event has a file name; drop files into
+   * public/assets/sounds/ with that name and one of the extensions below. A
+   * missing file is simply silent.
+   */
+  /**
+   * Player settings from the pause menu, saved in localStorage under
+   * `storageKey`. Defaults come from look.render.width and audio.volume.
+   */
+  settings: {
+    storageKey: 'deadkeys.settings',
+    renderWidth: { min: 320, max: 1920, step: 16 },
+  },
+
+  audio: {
+    base: '/assets/sounds/',
+    /** Tried in this order for each name. */
+    extensions: ['ogg', 'mp3', 'wav'],
+    /** Default volumes 0..1 (the pause menu settings override these and are saved). */
+    volume: { master: 0.8, sfx: 0.9, ambience: 0.5 },
+    /** Random pitch variation on gunshots (+/- fraction). */
+    gunshotPitchJitter: 0.08,
+    /** Event -> file names (several = a random pick each time). */
+    files: {
+      gunshot: ['gunshot_1', 'gunshot_2', 'gunshot_3'],
+      jam: ['jam'],
+      hit: ['hit'],
+      zombieDeath: ['zombie_death'],
+      runnerBark: ['runner_bark'],
+      biskSpit: ['bisk_spit'],
+      spitBreak: ['spit_break'],
+      blinded: ['blinded'],
+      soundwave: ['soundwave'],
+      waveStart: ['wave_start'],
+      gameOver: ['game_over'],
+      ambience: ['ambience'],
+    },
   },
 
   /** Word labels over the zombies' heads. */

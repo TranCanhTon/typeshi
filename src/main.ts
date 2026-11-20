@@ -1,6 +1,7 @@
-// Dead Keys, M1: the core loop in the M0 alley. Endless mode only.
+// Dead Keys: the alley, the game loop, run control (title, pause, results) and audio.
 
 import { AmbientLight, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
+import { AudioManager } from './audio/audio';
 import { CONFIG, currentLayout } from './config';
 import { Game, type Mode } from './game/game';
 import { createRng } from './game/rng';
@@ -13,7 +14,7 @@ import { ps1Uniforms } from './render/ps1Material';
 import { createTextureBank } from './render/textures';
 import { loadZombieAssets, ZombieRenderer } from './render/zombies';
 import { createDebugPanel } from './ui/debugPanel';
-import { DebugReadout, Hud, Screens } from './ui/hud';
+import { DebugReadout, Hud, Screens, type PlayerSettings } from './ui/hud';
 import { WordLabels } from './ui/labels';
 import './ui/style.css';
 import { ENGLISH_200, HARD_WORDS } from './words/lists';
@@ -24,6 +25,38 @@ const BEST_KEY = 'deadkeys.best.endless';
 // Live, editable copy of the look settings (the debug panel writes into it).
 const look = structuredClone(CONFIG.look);
 const worldRng = createRng(CONFIG.seed);
+
+// ---------------------------------------------------------------------------
+// Player settings (pause menu > Settings), saved in localStorage
+// ---------------------------------------------------------------------------
+
+function loadSettings(): PlayerSettings {
+  const s: PlayerSettings = { renderWidth: CONFIG.look.render.width, volumes: { ...CONFIG.audio.volume } };
+  try {
+    const saved = JSON.parse(localStorage.getItem(CONFIG.settings.storageKey) ?? 'null') as Partial<PlayerSettings> | null;
+    const R = CONFIG.settings.renderWidth;
+    if (saved && Number.isFinite(saved.renderWidth)) s.renderWidth = Math.min(R.max, Math.max(R.min, saved.renderWidth!));
+    for (const k of ['master', 'sfx', 'ambience'] as const) {
+      const v = saved?.volumes?.[k];
+      if (Number.isFinite(v)) s.volumes[k] = Math.min(1, Math.max(0, v!));
+    }
+  } catch {
+    /* nothing saved or storage unavailable: defaults */
+  }
+  return s;
+}
+
+function saveSettings(s: PlayerSettings): void {
+  try {
+    localStorage.setItem(CONFIG.settings.storageKey, JSON.stringify(s));
+  } catch {
+    /* storage unavailable: settings last for this visit only */
+  }
+}
+
+const settings = loadSettings();
+look.render.width = settings.renderWidth;
+const audio = new AudioManager(settings.volumes, worldRng.fork('audio'));
 
 const renderer = new WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -107,12 +140,14 @@ applyLook();
 // Game state
 // ---------------------------------------------------------------------------
 
-type Phase = 'loading' | 'title' | 'playing' | 'over';
+type Phase = 'loading' | 'title' | 'playing' | 'paused' | 'over';
 let phase: Phase = 'loading';
 let game: Game | null = null;
 let zombies: ZombieRenderer | null = null;
 /** The mode of the last run, for "play again". */
 let lastMode: Mode = 'waves';
+/** When the pause started, on the key event clock (performance.now() / 1000). */
+let pausedAt = 0;
 
 function readBest(): number {
   try {
@@ -147,8 +182,10 @@ function startRun(mode: Mode): void {
   zombies?.clear();
   labels.clear();
   screens.hide();
+  setFrozen(false);
   hud.clearBanner();
   hud.show(true);
+  unfocus();
   phase = 'playing';
 }
 
@@ -166,11 +203,58 @@ function toMenu(): void {
   game = null;
   zombies?.clear();
   labels.clear();
+  setFrozen(false);
   hud.clearBanner();
+  unfocus();
   hud.show(false);
   screens.title();
   phase = 'title';
 }
+
+/** Freeze or unfreeze the HUD and label CSS animations. */
+function setFrozen(frozen: boolean): void {
+  hud.setPaused(frozen);
+  labels.setPaused(frozen);
+}
+
+/** Drop focus from menu buttons and sliders so keys go to the game again. */
+function unfocus(): void {
+  (document.activeElement as HTMLElement | null)?.blur?.();
+}
+
+/**
+ * Esc mid-run. The logic simply isn't stepped while paused, so zombies,
+ * spawns, spits, the blind timer and the wave timers all hold. The typing
+ * clock runs on key event timestamps, so resume() moves it past the pause.
+ */
+function pause(): void {
+  if (phase !== 'playing' || !game) return;
+  phase = 'paused';
+  pausedAt = performance.now() / 1000;
+  setFrozen(true);
+  screens.pause(settings);
+}
+
+function resume(): void {
+  if (phase !== 'paused' || !game) return;
+  game.shiftKeyClock(performance.now() / 1000 - pausedAt);
+  setFrozen(false);
+  screens.hide();
+  unfocus();
+  phase = 'playing';
+}
+
+screens.onResume = resume;
+screens.onRestart = () => {
+  if (phase === 'paused') startRun(lastMode);
+};
+screens.onSettings = (s) => {
+  look.render.width = s.renderWidth;
+  applyLook();
+  for (const c of gui.controllersRecursive()) c.updateDisplay();
+  audio.setVolumes(s.volumes);
+  saveSettings(s);
+};
 
 screens.onPickMode = (mode) => {
   if (phase === 'title') startRun(mode);
@@ -179,11 +263,27 @@ screens.onRetry = () => {
   if (phase === 'over') startRun(lastMode);
 };
 screens.onMenu = () => {
-  if (phase === 'over') toMenu();
+  if (phase === 'over' || phase === 'paused') toMenu();
 };
 
+// Leaving the tab or window mid-run pauses (otherwise the typing clock would count the time away).
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pause();
+});
+window.addEventListener('blur', pause);
+// Browsers only allow sound after the first input.
+window.addEventListener('pointerdown', () => audio.unlock());
+
 window.addEventListener('keydown', (e) => {
-  // let the debug panel's number fields have their keys
+  audio.unlock();
+  // Esc toggles the pause, wherever focus is. It never reaches game.key, so it's never a typo.
+  if (e.key === 'Escape') {
+    if (phase === 'playing') pause();
+    else if (phase === 'paused') resume();
+    e.preventDefault();
+    return;
+  }
+  // let the debug panel's number fields and the settings sliders have their keys
   const t = e.target as HTMLElement | null;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -211,6 +311,15 @@ window.addEventListener('keydown', (e) => {
   if (phase === 'over' && (e.key === 'm' || e.key === 'M')) {
     toMenu();
     e.preventDefault();
+    return;
+  }
+  if (phase === 'paused' && !e.repeat) {
+    const k = e.key.toLowerCase();
+    if (k === 'r') startRun(lastMode);
+    else if (k === 'q') toMenu();
+    else if (k === 's' && !screens.inSettings) screens.pauseSettings();
+    else if (k === 'b' && screens.inSettings) screens.pauseMain();
+    if (e.key === ' ') e.preventDefault();
     return;
   }
   if (phase === 'playing' && game && e.key.length === 1) {
@@ -272,6 +381,7 @@ function tick(dt: number): void {
       acc -= STEP;
     }
     for (const e of game.drainEvents()) {
+      audio.onEvent(e);
       zombies?.onEvent(e);
       labels.onEvent(e);
       hud.onEvent(e);
@@ -282,14 +392,17 @@ function tick(dt: number): void {
   }
 
   // Bisk's spit: blur and dim the world and the labels (still faintly readable)
-  const blind = game && phase === 'playing' ? game.blindLevel : 0;
+  const inRun = phase === 'playing' || phase === 'paused';
+  const blind = game && inRun ? game.blindLevel : 0;
   const BL = CONFIG.game.bisk.blind;
   post.setBlind(blind, BL.blur, BL.dim, BL.tint);
   labels.setBlind(blind);
 
   if (game && zombies) {
-    zombies.update(game, dt);
-    if (phase === 'playing') {
+    // paused: views hold still (dt 0) but keep drawing
+    const viewDt = phase === 'paused' ? 0 : dt;
+    zombies.update(game, viewDt);
+    if (inRun) {
       labels.update(
         game,
         camera,
@@ -297,7 +410,7 @@ function tick(dt: number): void {
         (id, out) => zombies!.headAnchor(id, out),
         window.innerWidth,
         window.innerHeight,
-        dt,
+        viewDt,
       );
     }
   }
@@ -312,4 +425,4 @@ requestAnimationFrame(frame);
 
 // Handy for poking at the game from the browser console. `step(dt)` runs one
 // frame by hand (useful when the tab is in the background and gets no frames).
-Object.assign(window, { __dk: { scene, camera, renderer, post, look, applyLook, getGame: () => game, step: tick, getLayout: () => layout, rebuildLayout, config: CONFIG } });
+Object.assign(window, { __dk: { scene, camera, renderer, post, look, applyLook, getGame: () => game, step: tick, getLayout: () => layout, rebuildLayout, config: CONFIG, audio, pause, resume, getPhase: () => phase } });

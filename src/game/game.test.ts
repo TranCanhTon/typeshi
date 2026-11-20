@@ -305,6 +305,22 @@ describe('wpm', () => {
     expect(g.runWpm).toBeCloseTo(10 / 5 / 0.5, 6); // 10 correct chars over 30 s
   });
 
+  it('a pause in the middle of a word does not count as typing time', () => {
+    const g = makeGame(['house'], ['abandoned']);
+    spawnEmerged(g);
+    const z = g.zombies[0];
+    g.key('h', 10); // lock: the word's clock starts
+    g.key('o', 10.12);
+    g.shiftKeyClock(60); // paused for a minute, then resumed
+    let t = 70.24;
+    for (const ch of z.word.slice(2)) {
+      g.key(ch, t);
+      t += 0.12;
+    }
+    expect(g.stats.typingTime).toBeCloseTo(0.48, 6); // 4 gaps x 0.12 s, the minute left out
+    expect(g.typingWpm()).toBeCloseTo(100, 5);
+  });
+
   it('raw WPM includes typos, net does not', () => {
     const g = makeGame(['house'], ['abandoned']);
     spawnEmerged(g);

@@ -288,6 +288,16 @@ export class Game {
     }
   }
 
+  /**
+   * The key clock (browser event timestamps) kept running while the game was
+   * paused: move the open word's start forward by the pause, so a pause
+   * mid-word doesn't count as typing time.
+   */
+  shiftKeyClock(seconds: number): void {
+    if (this.lockStart !== null) this.lockStart += seconds;
+    this.lastKeyAt += seconds;
+  }
+
   /** Close the current word's typing span. */
   private endSpan(at: number): void {
     if (this.lockStart === null) return;

@@ -140,6 +140,11 @@ export class WordLabels {
     this.layout(items, dt);
   }
 
+  /** Freeze the label CSS animations (pop, typo flash) while paused. */
+  setPaused(paused: boolean): void {
+    this.root.classList.toggle('paused', paused);
+  }
+
   private blind = -1;
   /** Blinded by spit: blur and fade the labels too, but keep them faintly readable. */
   setBlind(level: number): void {

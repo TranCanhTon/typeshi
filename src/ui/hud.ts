@@ -4,6 +4,13 @@
 
 import { CONFIG } from '../config';
 import type { Game, GameEvent, Mode } from '../game/game';
+import type { Volumes } from '../audio/audio';
+
+/** What the pause menu's Settings view edits. */
+export interface PlayerSettings {
+  renderWidth: number;
+  volumes: Volumes;
+}
 
 function fmtTime(t: number): string {
   const m = Math.floor(t / 60);
@@ -52,6 +59,11 @@ export class Hud {
     }
   }
 
+  /** Freeze the HUD's CSS animations (the wave banner) while paused. */
+  setPaused(paused: boolean): void {
+    this.root.classList.toggle('paused', paused);
+  }
+
   /** Hide the banner straight away (new run, game over). */
   clearBanner(): void {
     this.banner.classList.remove('show');
@@ -81,6 +93,13 @@ export class Screens {
   onMenu: () => void = () => undefined;
   /** Called when "Play again" is clicked. */
   onRetry: () => void = () => undefined;
+  /** Pause menu: Resume. */
+  onResume: () => void = () => undefined;
+  /** Pause menu: Restart (same mode). */
+  onRestart: () => void = () => undefined;
+  /** Pause menu: a settings slider moved (already applied to the object passed to pause()). */
+  onSettings: (s: PlayerSettings) => void = () => undefined;
+  private settings: PlayerSettings | null = null;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -93,6 +112,21 @@ export class Screens {
       if (mode) this.onPickMode(mode);
       else if (b.dataset.act === 'menu') this.onMenu();
       else if (b.dataset.act === 'retry') this.onRetry();
+      else if (b.dataset.act === 'resume') this.onResume();
+      else if (b.dataset.act === 'restart') this.onRestart();
+      else if (b.dataset.act === 'settings') this.pauseSettings();
+      else if (b.dataset.act === 'back') this.pauseMain();
+    });
+    this.root.addEventListener('input', (e) => {
+      const el = e.target as HTMLInputElement;
+      const s = this.settings;
+      if (!s || el.type !== 'range') return;
+      const v = Number(el.value);
+      if (el.name === 'renderWidth') s.renderWidth = v;
+      else s.volumes[el.name as keyof Volumes] = v / 100;
+      const out = el.parentElement?.querySelector('output');
+      if (out) out.textContent = el.name === 'renderWidth' ? `${v} px` : `${v}%`;
+      this.onSettings(s);
     });
   }
 
@@ -146,6 +180,56 @@ export class Screens {
         <div class="dk-modes">
           <button type="button" data-act="retry"><b>ENTER</b> Play again</button>
           <button type="button" data-act="menu"><b>M</b> Main menu</button>
+        </div>
+      </div>`;
+    this.root.style.display = '';
+  }
+
+  /** Esc mid-run: the pause menu. `settings` is edited in place by the sliders. */
+  pause(settings: PlayerSettings): void {
+    this.settings = settings;
+    this.pauseMain();
+  }
+
+  /** True while the pause menu shows its Settings view. */
+  get inSettings(): boolean {
+    return this.root.querySelector('.dk-settings') !== null;
+  }
+
+  pauseMain(): void {
+    this.root.innerHTML = `
+      <div class="dk-panel">
+        <h1>PAUSED</h1>
+        <div class="dk-menu">
+          <button type="button" data-act="resume"><b>ESC</b> Resume</button>
+          <button type="button" data-act="restart"><b>R</b> Restart</button>
+          <button type="button" data-act="settings"><b>S</b> Settings</button>
+          <button type="button" data-act="menu"><b>Q</b> Quit to main menu</button>
+        </div>
+      </div>`;
+    this.root.style.display = '';
+  }
+
+  pauseSettings(): void {
+    const s = this.settings;
+    if (!s) return;
+    const R = CONFIG.settings.renderWidth;
+    const pct = (v: number) => Math.round(v * 100);
+    const slider = (name: string, label: string, value: number, min: number, max: number, step: number, unit: string) => `
+      <label class="dk-slider"><span>${label}</span>
+        <input type="range" name="${name}" min="${min}" max="${max}" step="${step}" value="${value}">
+        <output>${value}${unit}</output></label>`;
+    this.root.innerHTML = `
+      <div class="dk-panel dk-settings">
+        <h1>SETTINGS</h1>
+        ${slider('renderWidth', 'Render width', s.renderWidth, R.min, R.max, R.step, ' px')}
+        <p class="dk-small">Lower = chunkier pixels and faster. Default ${CONFIG.look.render.width} px.</p>
+        ${slider('master', 'Master volume', pct(s.volumes.master), 0, 100, 1, '%')}
+        ${slider('sfx', 'Effects volume', pct(s.volumes.sfx), 0, 100, 1, '%')}
+        ${slider('ambience', 'Ambience volume', pct(s.volumes.ambience), 0, 100, 1, '%')}
+        <div class="dk-menu">
+          <button type="button" data-act="back"><b>B</b> Back</button>
+          <button type="button" data-act="resume"><b>ESC</b> Resume</button>
         </div>
       </div>`;
     this.root.style.display = '';
