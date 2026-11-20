@@ -1,0 +1,263 @@
+// Dead Keys, M1: the core loop in the M0 alley. Endless mode only.
+
+import { AmbientLight, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
+import { CONFIG, currentLayout } from './config';
+import { Game } from './game/game';
+import { createRng } from './game/rng';
+import { buildAlley } from './render/alley';
+import { Dust } from './render/dust';
+import { createGun } from './render/gun';
+import { Lamps } from './render/lamps';
+import { RetroPost } from './render/post';
+import { ps1Uniforms } from './render/ps1Material';
+import { createTextureBank } from './render/textures';
+import { loadZombieAssets, ZombieRenderer } from './render/zombies';
+import { createDebugPanel } from './ui/debugPanel';
+import { DebugReadout, Hud, Screens } from './ui/hud';
+import { WordLabels } from './ui/labels';
+import './ui/style.css';
+import { ENGLISH_200, HARD_WORDS } from './words/lists';
+import { WordPicker } from './words/picker';
+
+const BEST_KEY = 'deadkeys.best.endless';
+
+// Live, editable copy of the look settings (the debug panel writes into it).
+const look = structuredClone(CONFIG.look);
+const worldRng = createRng(CONFIG.seed);
+
+const renderer = new WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+const app = document.getElementById('app')!;
+app.appendChild(renderer.domElement);
+
+const scene = new Scene();
+const camera = new PerspectiveCamera(look.camera.fov, window.innerWidth / window.innerHeight, CONFIG.camera.near, CONFIG.camera.far);
+scene.add(camera);
+
+const { bank, textures } = createTextureBank(worldRng.fork('textures'), look.ps1.textureSize);
+let layout = currentLayout();
+// Same seed every build, so the streets look the same until the layout changes.
+let alley = buildAlley(worldRng.fork('alley'), textures, layout, (t) => bank.remove(t));
+scene.add(alley.group);
+const ambient = new AmbientLight();
+scene.add(ambient);
+const lamps = new Lamps(worldRng.fork('lamps'), look, layout);
+scene.add(lamps.group);
+const dust = new Dust(worldRng.fork('dust'), look, lamps, layout);
+scene.add(dust.points);
+createGun(camera);
+
+const post = new RetroPost(renderer, scene, camera);
+const labels = new WordLabels(app);
+const hud = new Hud(app);
+const screens = new Screens(app);
+const readout = new DebugReadout(app);
+
+function applyLook(): void {
+  const aspect = window.innerWidth / window.innerHeight;
+  post.setResolution(look.render.width, aspect);
+  post.setDither(look.ps1.ditherStrength, look.ps1.colorDepth);
+  ps1Uniforms.uSnapGrid.value.set(post.width / 2, post.height / 2);
+  ps1Uniforms.uSnap.value = look.ps1.vertexSnap;
+  ps1Uniforms.uAffine.value = look.ps1.affineWarp;
+  ps1Uniforms.uFogDensity.value = look.fog.density;
+  ps1Uniforms.uFogNear.value.set(look.fog.nearColor);
+  ps1Uniforms.uFogFar.value.set(look.fog.farColor);
+  ps1Uniforms.uFogColorDist.value = look.fog.colorDistance;
+  ps1Uniforms.uLampGlow.value = look.fog.lampGlow;
+  ps1Uniforms.uLampGlowRadius.value = look.fog.lampGlowRadius;
+  bank.setSize(Number(look.ps1.textureSize));
+  ambient.color.set(look.ambient.color);
+  ambient.intensity = look.ambient.intensity;
+  lamps.applyLook();
+  camera.fov = look.camera.fov;
+  camera.aspect = aspect;
+  camera.updateProjectionMatrix();
+  dust.applyLook(post.height / (window.innerHeight * renderer.getPixelRatio()));
+}
+
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  applyLook();
+});
+
+/**
+ * Rebuild the streets after a layout slider changes: geometry, lamps, dust,
+ * and the paths new zombies take. Zombies already walking keep their paths.
+ */
+function rebuildLayout(): void {
+  layout = currentLayout();
+  scene.remove(alley.group);
+  alley.dispose();
+  alley = buildAlley(worldRng.fork('alley'), textures, layout, (t) => bank.remove(t));
+  scene.add(alley.group);
+  lamps.setLayout(layout);
+  dust.setLayout(layout);
+  if (game) game.layout = layout;
+  bank.setSize(Number(look.ps1.textureSize));
+}
+
+// The Gameplay and Layout folders edit CONFIG in place; the running game reads it every tick.
+const gui = createDebugPanel(look, applyLook, CONFIG.game, { layout: CONFIG.layout, onLayout: rebuildLayout, onLamp: () => lamps.applyLook() });
+gui.hide();
+applyLook();
+
+// ---------------------------------------------------------------------------
+// Game state
+// ---------------------------------------------------------------------------
+
+type Phase = 'loading' | 'title' | 'playing' | 'over';
+let phase: Phase = 'loading';
+let game: Game | null = null;
+let zombies: ZombieRenderer | null = null;
+
+function readBest(): number {
+  try {
+    return Number(localStorage.getItem(BEST_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveBest(score: number): void {
+  try {
+    if (score > readBest()) localStorage.setItem(BEST_KEY, String(score));
+  } catch {
+    /* storage unavailable: best just isn't kept */
+  }
+}
+
+function startRun(): void {
+  // Each endless run gets its own seed; everything random in the run flows from it.
+  const runRng = createRng((Date.now() ^ 0x9e3779b9) >>> 0);
+  game = new Game(
+    CONFIG.game,
+    runRng.fork('game'),
+    new WordPicker(runRng.fork('words'), CONFIG.game.words.recentMemory),
+    { normal: ENGLISH_200, hard: HARD_WORDS },
+    layout,
+    CONFIG.layout.spawnWeights,
+  );
+  zombies?.clear();
+  labels.clear();
+  screens.hide();
+  hud.show(true);
+  phase = 'playing';
+}
+
+function endRun(g: Game): void {
+  const best = readBest();
+  saveBest(g.score);
+  labels.clear();
+  screens.gameOver(g, best);
+  phase = 'over';
+}
+
+window.addEventListener('keydown', (e) => {
+  // let the debug panel's number fields have their keys
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  if (e.key === 'F2') {
+    readout.toggle();
+    e.preventDefault();
+    return;
+  }
+  if (e.key === '`') {
+    gui._hidden ? gui.show() : gui.hide();
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'Enter' && (phase === 'title' || phase === 'over')) {
+    startRun();
+    e.preventDefault();
+    return;
+  }
+  if (phase === 'playing' && game && e.key.length === 1) {
+    if (e.key === ' ') e.preventDefault(); // reserved for the grenade (M2)
+    // the key event's own timestamp, so typing time isn't rounded to frames or logic ticks
+    if (!e.repeat) game.key(e.key, e.timeStamp / 1000);
+  }
+});
+
+hud.show(false);
+// Wait for the zombies and the label font before showing anything, so labels
+// never appear in a fallback font or get measured at the wrong size.
+Promise.all([loadZombieAssets(), document.fonts.load(`${CONFIG.labels.fontSize}px "DK Label"`)])
+  .then(([assets, faces]) => {
+    if (faces.length === 0) console.warn('Label font did not load; using the fallback font.');
+    zombies = new ZombieRenderer(assets, worldRng.fork('zombie-views'));
+    scene.add(zombies.group);
+    updateCamera();
+    zombies.warmup(() => renderer.compile(scene, camera));
+    screens.title();
+    phase = 'title';
+  })
+  .catch((err) => {
+    console.error(err);
+    document.body.insertAdjacentHTML('beforeend', `<pre style="color:#f88;position:fixed;top:8px;left:8px">Failed to load zombies: ${String(err)}</pre>`);
+  });
+
+// ---------------------------------------------------------------------------
+// Loop: fixed-step logic, render every animation frame
+// ---------------------------------------------------------------------------
+
+let time = 0;
+function updateCamera(): void {
+  const s = look.camera.sway;
+  const w = look.camera.swaySpeed;
+  camera.position.set(Math.sin(time * w * 0.71) * s, look.camera.height + Math.sin(time * w * 1.13) * s * 0.6, CONFIG.camera.z);
+  camera.lookAt(Math.sin(time * w * 0.43) * s * 6, CONFIG.camera.lookAtY + Math.sin(time * w * 0.61) * s * 4, CONFIG.camera.lookAtZ);
+}
+
+let last = performance.now();
+let acc = 0;
+const STEP = CONFIG.game.fixedStep;
+
+function frame(now: number): void {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  tick(dt);
+  requestAnimationFrame(frame);
+}
+
+/** One frame: fixed-step logic, events, views, render. */
+function tick(dt: number): void {
+  time += dt;
+
+  if (game && phase === 'playing') {
+    acc += dt;
+    while (acc >= STEP) {
+      game.update(STEP);
+      acc -= STEP;
+    }
+    for (const e of game.drainEvents()) {
+      zombies?.onEvent(e);
+      labels.onEvent(e);
+      hud.onEvent(e);
+      if (e.type === 'gameover') endRun(game);
+    }
+    hud.update(game);
+    readout.update(game, performance.now() / 1000);
+  }
+
+  if (game && zombies) {
+    zombies.update(game, dt);
+    if (phase === 'playing') {
+      labels.update(game, camera, (id, out) => zombies!.labelAnchor(id, out), window.innerWidth, window.innerHeight, dt);
+    }
+  }
+
+  lamps.update(dt);
+  dust.update(dt);
+  updateCamera();
+  camera.updateMatrixWorld();
+  post.render();
+}
+requestAnimationFrame(frame);
+
+// Handy for poking at the game from the browser console. `step(dt)` runs one
+// frame by hand (useful when the tab is in the background and gets no frames).
+Object.assign(window, { __dk: { scene, camera, renderer, post, look, applyLook, getGame: () => game, step: tick, getLayout: () => layout, rebuildLayout, config: CONFIG } });
